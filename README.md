@@ -1,4 +1,4 @@
-[![Arch# ☠️ Reaper Package Manager (Zig Implementation)
+[![Arch# ☠️ Reaper Package Manager
 
 ---
 
