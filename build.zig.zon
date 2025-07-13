@@ -1,0 +1,16 @@
+.{
+    .name = .reaper,
+    .version = "1.0.0",
+    .fingerprint = 0xd710829078dbe902,
+    .dependencies = .{
+        .zsync = .{
+            .url = "https://github.com/ghostkellz/zsync/archive/refs/heads/main.tar.gz",
+            .hash = "zsync-0.2.0-KAuheaGRDAD-QcOCIdlrjI8K13Ocd077SXaI85d4iC9E",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
