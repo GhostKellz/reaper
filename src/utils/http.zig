@@ -17,7 +17,7 @@ pub const HttpClient = struct {
     user_agent: []const u8,
     
     pub fn init(allocator: std.mem.Allocator, runtime: *tokioZ.Runtime) !*HttpClient {
-        var self = try allocator.create(HttpClient);
+        const self = try allocator.create(HttpClient);
         self.* = .{
             .allocator = allocator,
             .runtime = runtime,
@@ -57,10 +57,10 @@ pub const HttpClient = struct {
         defer conn.close();
         
         // Build request
-        var request = std.ArrayList(u8).init(self.allocator);
-        defer request.deinit();
+        var request_data = std.ArrayList(u8).init(self.allocator);
+        defer request_data.deinit();
         
-        try request.writer().print(
+        try request_data.writer().print(
             \\GET {s} HTTP/1.1
             \\Host: {s}
             \\User-Agent: {s}
@@ -75,7 +75,7 @@ pub const HttpClient = struct {
         });
         
         // Send request
-        try conn.writeAll(request.items);
+        try conn.writeAll(request_data.items);
         
         // Read response headers
         var headers = std.ArrayList(u8).init(self.allocator);
@@ -156,7 +156,6 @@ pub const HttpClient = struct {
         
         try headers.append("User-Agent", self.user_agent);
         
-        var buf: [8192]u8 = undefined;
         var req = try client.open(.GET, try std.Uri.parse(url), headers, .{});
         defer req.deinit();
         

@@ -11,12 +11,24 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // Add zsync dependency
+    // Add dependencies
     const zsync = b.dependency("zsync", .{
         .target = target,
         .optimize = optimize,
     });
     exe.root_module.addImport("zsync", zsync.module("zsync"));
+
+    const phantom = b.dependency("phantom", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.root_module.addImport("phantom", phantom.module("phantom"));
+
+    const ghostnet = b.dependency("ghostnet", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.root_module.addImport("ghostnet", ghostnet.module("ghostnet"));
 
     b.installArtifact(exe);
 
@@ -36,6 +48,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    unit_tests.root_module.addImport("zsync", zsync.module("zsync"));
+    unit_tests.root_module.addImport("phantom", phantom.module("phantom"));
+    unit_tests.root_module.addImport("ghostnet", ghostnet.module("ghostnet"));
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
 

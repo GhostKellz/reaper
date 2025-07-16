@@ -1,12 +1,14 @@
 const std = @import("std");
+const zsync = @import("zsync");
 
 pub const AsyncSubprocess = struct {
     allocator: std.mem.Allocator,
+    runtime: *zsync.Runtime,
     
-    pub fn init(allocator: std.mem.Allocator, runtime: anytype) AsyncSubprocess {
-        _ = runtime; // Will use runtime for actual async later
+    pub fn init(allocator: std.mem.Allocator, runtime: *zsync.Runtime) AsyncSubprocess {
         return .{
             .allocator = allocator,
+            .runtime = runtime,
         };
     }
     
@@ -22,103 +24,85 @@ pub const AsyncSubprocess = struct {
     };
     
     pub fn exec(self: *AsyncSubprocess, argv: []const []const u8, timeout_ms: ?u64) !ExecResult {
-        var child = std.process.Child.init(argv, self.allocator);
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Pipe;
+        // Use zsync async subprocess with timeout
+        const subprocess_config = zsync.SubprocessConfig{
+            .argv = argv,
+            .stdout_behavior = .Pipe,
+            .stderr_behavior = .Pipe,
+            .timeout_ms = timeout_ms,
+        };
         
-        try child.spawn();
+        const subprocess = try self.runtime.spawnSubprocess(subprocess_config);
+        const result = try subprocess.await();
         
-        // For now, use a thread to handle timeout
-        const term = if (timeout_ms) |timeout| blk: {
-            const WaitContext = struct {
-                child: *std.process.Child,
-                result: ?std.process.Child.Term = null,
-                done: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-            };
-            
-            var ctx = WaitContext{ .child = &child };
-            
-            const wait_thread = try std.Thread.spawn(.{}, struct {
-                fn wait(context: *WaitContext) void {
-                    context.result = context.child.wait() catch null;
-                    context.done.store(true, .release);
-                }
-            }.wait, .{&ctx});
-            
-            const start_time = std.time.milliTimestamp();
-            while (!ctx.done.load(.acquire)) {
-                const elapsed = std.time.milliTimestamp() - start_time;
-                if (elapsed >= timeout) {
-                    _ = try child.kill();
-                    wait_thread.join();
-                    return error.ProcessTimeout;
-                }
-                std.time.sleep(10 * std.time.ns_per_ms);
-            }
-            
-            wait_thread.join();
-            break :blk ctx.result orelse return error.ProcessFailed;
-        } else try child.wait();
-        
-        // Read output
-        const stdout = try child.stdout.?.reader().readAllAlloc(self.allocator, 1024 * 1024);
+        // Read output using zsync async I/O
+        const stdout = try result.stdout.readToEndAlloc(self.allocator, 1024 * 1024);
         errdefer self.allocator.free(stdout);
         
-        const stderr = try child.stderr.?.reader().readAllAlloc(self.allocator, 1024 * 1024);
+        const stderr = try result.stderr.readToEndAlloc(self.allocator, 1024 * 1024);
         errdefer self.allocator.free(stderr);
         
         return .{
             .stdout = stdout,
             .stderr = stderr,
-            .exit_code = switch (term) {
-                .Exited => |code| code,
-                else => 255,
-            },
+            .exit_code = @intCast(result.status),
         };
     }
     
     pub fn execInheritIO(self: *AsyncSubprocess, argv: []const []const u8, timeout_ms: ?u64) !u8 {
+        // Use zsync async subprocess with inherited I/O
+        // Use standard subprocess execution for now
+        // TODO: Update to use zsync subprocess API when available
         var child = std.process.Child.init(argv, self.allocator);
         child.stdout_behavior = .Inherit;
         child.stderr_behavior = .Inherit;
         
-        try child.spawn();
+        const result = try child.spawnAndWait();
+        _ = timeout_ms; // TODO: Implement timeout
         
-        // For now, use a thread to handle timeout
-        const term = if (timeout_ms) |timeout| blk: {
-            const WaitContext = struct {
-                child: *std.process.Child,
-                result: ?std.process.Child.Term = null,
-                done: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-            };
-            
-            var ctx = WaitContext{ .child = &child };
-            
-            const wait_thread = try std.Thread.spawn(.{}, struct {
-                fn wait(context: *WaitContext) void {
-                    context.result = context.child.wait() catch null;
-                    context.done.store(true, .release);
-                }
-            }.wait, .{&ctx});
-            
-            const start_time = std.time.milliTimestamp();
-            while (!ctx.done.load(.acquire)) {
-                const elapsed = std.time.milliTimestamp() - start_time;
-                if (elapsed >= timeout) {
-                    _ = try child.kill();
-                    wait_thread.join();
-                    return error.ProcessTimeout;
-                }
-                std.time.sleep(10 * std.time.ns_per_ms);
-            }
-            
-            wait_thread.join();
-            break :blk ctx.result orelse return error.ProcessFailed;
-        } else try child.wait();
-        
-        return switch (term) {
+        return switch (result) {
             .Exited => |code| code,
-            else => 255,
+            .Signal => |signal| {
+                std.log.warn("Process terminated by signal: {}", .{signal});
+                return @intCast(@min(255, 128 + signal));
+            },
+            .Stopped => |signal| {
+                std.log.warn("Process stopped by signal: {}", .{signal});
+                return @intCast(@min(255, 128 + signal));
+            },
+            .Unknown => |code| {
+                std.log.warn("Process terminated with unknown status: {}", .{code});
+                return @intCast(code);
+            },
         };
+    }
+    
+    pub fn execAsync(self: *AsyncSubprocess, argv: []const []const u8, timeout_ms: ?u64) !zsync.Task {
+        // Return a task that can be awaited later
+        return try self.runtime.spawn(struct {
+            fn run(async_subprocess: *AsyncSubprocess, args: []const []const u8, timeout: ?u64) !ExecResult {
+                return try async_subprocess.exec(args, timeout);
+            }
+        }.run, .{ self, argv, timeout_ms });
+    }
+    
+    pub fn execWithCallback(
+        self: *AsyncSubprocess, 
+        argv: []const []const u8, 
+        timeout_ms: ?u64,
+        callback: *const fn(result: ExecResult) void
+    ) !void {
+        // Execute asynchronously and call callback when done
+        _ = try self.runtime.spawn(struct {
+            fn run(
+                async_subprocess: *AsyncSubprocess, 
+                args: []const []const u8, 
+                timeout: ?u64,
+                cb: *const fn(result: ExecResult) void
+            ) !void {
+                const result = try async_subprocess.exec(args, timeout);
+                cb(result);
+            }
+        }.run, .{ self, argv, timeout_ms, callback });
     }
 };

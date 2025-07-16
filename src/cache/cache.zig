@@ -1,6 +1,5 @@
 const std = @import("std");
-const tokioZ = @import("tokioZ");
-const zcrypto = @import("zcrypto");
+const zsync = @import("zsync");
 
 pub const CacheError = error{
     EntryNotFound,
@@ -108,7 +107,7 @@ pub const EvictionPolicy = enum {
 
 pub const Cache = struct {
     allocator: std.mem.Allocator,
-    runtime: *tokioZ.Runtime,
+    runtime: *zsync.Runtime,
     
     // Storage
     entries: std.StringHashMap(*CacheEntry),
@@ -126,7 +125,7 @@ pub const Cache = struct {
     // Concurrency
     mutex: std.Thread.Mutex,
     
-    pub fn init(allocator: std.mem.Allocator, runtime: *tokioZ.Runtime, cache_dir: []const u8) !*Cache {
+    pub fn init(allocator: std.mem.Allocator, runtime: *zsync.Runtime, cache_dir: []const u8) !*Cache {
         var self = try allocator.create(Cache);
         self.* = .{
             .allocator = allocator,
@@ -296,26 +295,36 @@ pub const Cache = struct {
         return self.get(hash);
     }
     
-    // File-based caching
+    // File-based caching with async I/O
     pub fn cacheFile(self: *Cache, key: []const u8, file_path: []const u8) !void {
-        const file = try std.fs.openFileAbsolute(file_path, .{});
-        defer file.close();
-        
-        const content = try file.readToEndAlloc(self.allocator, 100 * 1024 * 1024);
+        const content = try zsync.fs.readFileAlloc(self.allocator, file_path);
         defer self.allocator.free(content);
         
         try self.put(key, content);
     }
     
+    pub fn cacheFileAsync(self: *Cache, key: []const u8, file_path: []const u8) !zsync.Task {
+        return try self.runtime.spawn(struct {
+            fn cacheFileTask(cache: *Cache, cache_key: []const u8, path: []const u8) !void {
+                return try cache.cacheFile(cache_key, path);
+            }
+        }.cacheFileTask, .{ self, key, file_path });
+    }
+    
     pub fn getCachedFile(self: *Cache, key: []const u8, dest_path: []const u8) !bool {
         if (self.get(key)) |content| {
-            const file = try std.fs.createFileAbsolute(dest_path, .{});
-            defer file.close();
-            
-            try file.writeAll(content);
+            try zsync.fs.writeFile(dest_path, content);
             return true;
         }
         return false;
+    }
+    
+    pub fn getCachedFileAsync(self: *Cache, key: []const u8, dest_path: []const u8) !zsync.Task {
+        return try self.runtime.spawn(struct {
+            fn getCachedFileTask(cache: *Cache, cache_key: []const u8, path: []const u8) !bool {
+                return try cache.getCachedFile(cache_key, path);
+            }
+        }.getCachedFileTask, .{ self, key, dest_path });
     }
     
     // Private methods
@@ -440,25 +449,20 @@ pub const Cache = struct {
         const file_path = try std.fs.path.join(self.allocator, &.{ self.cache_dir, entry.key });
         defer self.allocator.free(file_path);
         
-        const file = try std.fs.createFileAbsolute(file_path, .{});
-        defer file.close();
-        
-        // Write entry data
-        try file.writeAll(entry.value);
+        // Write entry data using async I/O
+        try zsync.fs.writeFile(file_path, entry.value);
         
         // Write metadata
         const meta_path = try std.fmt.allocPrint(self.allocator, "{s}.meta", .{file_path});
         defer self.allocator.free(meta_path);
         
-        const meta_file = try std.fs.createFileAbsolute(meta_path, .{});
-        defer meta_file.close();
+        const metadata = try std.fmt.allocPrint(self.allocator,
+            "checksum={s}\nsize={}\ncreated_at={}\naccessed_at={}\naccess_count={}\n",
+            .{ std.fmt.fmtSliceHexLower(entry.checksum), entry.size, entry.created_at, entry.accessed_at, entry.access_count }
+        );
+        defer self.allocator.free(metadata);
         
-        const writer = meta_file.writer();
-        try writer.print("checksum={s}\n", .{std.fmt.fmtSliceHexLower(entry.checksum)});
-        try writer.print("size={}\n", .{entry.size});
-        try writer.print("created_at={}\n", .{entry.created_at});
-        try writer.print("accessed_at={}\n", .{entry.accessed_at});
-        try writer.print("access_count={}\n", .{entry.access_count});
+        try zsync.fs.writeFile(meta_path, metadata);
     }
     
     fn loadFromDisk(self: *Cache) !void {
@@ -471,14 +475,11 @@ pub const Cache = struct {
                 continue;
             }
             
-            // Load cache entry from disk
+            // Load cache entry from disk using async I/O
             const file_path = try std.fs.path.join(self.allocator, &.{ self.cache_dir, entry.name });
             defer self.allocator.free(file_path);
             
-            const file = std.fs.openFileAbsolute(file_path, .{}) catch continue;
-            defer file.close();
-            
-            const content = file.readToEndAlloc(self.allocator, 100 * 1024 * 1024) catch continue;
+            const content = zsync.fs.readFileAlloc(self.allocator, file_path) catch continue;
             
             const cache_entry = CacheEntry.init(self.allocator, entry.name, content) catch {
                 self.allocator.free(content);

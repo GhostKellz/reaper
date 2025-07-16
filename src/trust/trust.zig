@@ -288,14 +288,22 @@ pub const TrustEngine = struct {
         var score: f32 = 0.0;
         
         // Votes contribution (0-2 points)
-        if (pkg.votes > 1000) score += 2.0;
-        else if (pkg.votes > 500) score += 1.5;
-        else if (pkg.votes > 100) score += 1.0;
-        else if (pkg.votes > 10) score += 0.5;
+        if (pkg.votes > 1000) {
+            score += 2.0;
+        } else if (pkg.votes > 500) {
+            score += 1.5;
+        } else if (pkg.votes > 100) {
+            score += 1.0;
+        } else if (pkg.votes > 10) {
+            score += 0.5;
+        }
         
         // Popularity contribution (0-1 point)
-        if (pkg.popularity > 10.0) score += 1.0;
-        else if (pkg.popularity > 1.0) score += 0.5;
+        if (pkg.popularity > 10.0) {
+            score += 1.0;
+        } else if (pkg.popularity > 1.0) {
+            score += 0.5;
+        }
         
         return score;
     }

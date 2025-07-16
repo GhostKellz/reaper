@@ -1,11 +1,19 @@
 .{
     .name = .reaper,
-    .version = "1.0.0",
+    .version = "1.0.1",
     .fingerprint = 0xd710829078dbe902,
     .dependencies = .{
         .zsync = .{
             .url = "https://github.com/ghostkellz/zsync/archive/refs/heads/main.tar.gz",
-            .hash = "zsync-0.2.0-KAuheaGRDAD-QcOCIdlrjI8K13Ocd077SXaI85d4iC9E",
+            .hash = "zsync-0.3.2-KAuhed0XGADaOKjYNl34Ragvca2zBYqvoAsBV-AhkoLS",
+        },
+        .phantom = .{
+            .url = "https://github.com/ghostkellz/phantom/archive/refs/heads/main.tar.gz",
+            .hash = "phantom-0.3.0-E0eWBClECACW3v3DoGU5M1Hv6QxZIEgvbMDsT9U4xOup",
+        },
+        .ghostnet = .{
+            .url = "https://github.com/ghostkellz/ghostnet/archive/refs/heads/main.tar.gz",
+            .hash = "ghostnet-0.2.1-mG-fWPG5BQDF0zGg6YWl1LgNiOzzZRrmT4XU9xl6I4s5",
         },
     },
     .paths = .{
