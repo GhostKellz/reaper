@@ -8,8 +8,6 @@ const phantom = @import("phantom");
 const ghostnet = @import("ghostnet");
 const AsyncSubprocess = @import("async/subprocess.zig").AsyncSubprocess;
 const PhantomTui = @import("tui/phantom_tui.zig").PhantomTui;
-const HttpClient = @import("network/http_client.zig").HttpClient;
-const ReaperConfig = @import("network/http_client.zig").ReaperConfig;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -22,18 +20,14 @@ pub fn main() !void {
     // Initialize zsync runtime with enhanced configuration
     var runtime = try zsync.Runtime.init(allocator, .{
         .thread_pool_size = 8, // Increased for better parallel performance
-        .max_tasks = 2048,     // More concurrent tasks
+        .max_tasks = 2048, // More concurrent tasks
         .enable_io = true,
         .enable_timers = true,
     });
     defer runtime.deinit();
 
-    // Initialize HTTP client with ghostnet using ReaperConfig
-    const reaper_config = ReaperConfig{
-        .cache_dir = "/var/cache/reaper",
-        .max_concurrent_downloads = 3,
-    };
-    var http_client = try HttpClient.initWithConfig(allocator, runtime, reaper_config);
+    // Initialize ghostnet HTTP client
+    var http_client = try ghostnet.HttpClient.init(allocator, runtime);
     defer http_client.deinit();
 
     // Create async subprocess handler
@@ -41,12 +35,12 @@ pub fn main() !void {
 
     // Check if we should run in TUI mode
     const run_tui = shouldRunTui(args);
-    
+
     if (run_tui) {
         // Initialize and run phantom TUI
-        var phantom_tui = try PhantomTui.init(allocator, runtime, http_client.client);
+        var phantom_tui = try PhantomTui.init(allocator, runtime, http_client);
         defer phantom_tui.deinit();
-        
+
         try phantom_tui.run();
     } else {
         // Run traditional CLI mode
@@ -72,7 +66,7 @@ pub fn main() !void {
 fn shouldRunTui(args: [][:0]u8) bool {
     // Run TUI mode if no arguments provided or --tui flag is present
     if (args.len == 1) return true; // Only program name, no other args
-    
+
     for (args[1..]) |arg| {
         if (std.mem.eql(u8, arg, "--tui") or std.mem.eql(u8, arg, "-t")) {
             return true;
@@ -81,7 +75,7 @@ fn shouldRunTui(args: [][:0]u8) bool {
             return false;
         }
     }
-    
+
     // Default to CLI mode if specific commands are provided
     return false;
 }

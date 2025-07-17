@@ -50,7 +50,6 @@ pub fn build(b: *std.Build) void {
     });
     unit_tests.root_module.addImport("zsync", zsync.module("zsync"));
     unit_tests.root_module.addImport("phantom", phantom.module("phantom"));
-    unit_tests.root_module.addImport("ghostnet", ghostnet.module("ghostnet"));
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
 
