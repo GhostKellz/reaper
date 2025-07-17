@@ -13,7 +13,7 @@
         },
         .ghostnet = .{
             .url = "https://github.com/ghostkellz/ghostnet/archive/main.tar.gz",
-            .hash = "ghostnet-0.2.3-mG-fWC_MBwBffS9k3967RGmWPg6Hdn7cyed300bT-m2v",
+            .hash = "ghostnet-0.2.4-mG-fWNTFBwCyhoZnaMDLbyKERTHT4FA0Qox5EAdtAtwl",
         },
     },
     .paths = .{
