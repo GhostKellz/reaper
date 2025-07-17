@@ -1,6 +1,6 @@
 .{
     .name = .reaper,
-    .version = "1.0.2",
+    .version = "1.0.3",
     .fingerprint = 0xd710829078dbe902,
     .dependencies = .{
         .zsync = .{
@@ -10,10 +10,6 @@
         .phantom = .{
             .url = "https://github.com/ghostkellz/phantom/archive/main.tar.gz",
             .hash = "phantom-0.3.0-E0eWBClECACW3v3DoGU5M1Hv6QxZIEgvbMDsT9U4xOup",
-        },
-        .ghostnet = .{
-            .url = "https://github.com/ghostkellz/ghostnet/archive/main.tar.gz",
-            .hash = "ghostnet-0.2.4-mG-fWHfNBwCbJo_Pw-nH1OQtWzfBbL6VIdGWfyxSFUdh",
         },
     },
     .paths = .{

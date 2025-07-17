@@ -9,6 +9,9 @@ pub const PackageType = enum {
 };
 
 pub const Package = struct {
+    // Arena allocator for all package strings
+    arena: std.heap.ArenaAllocator,
+    
     name: []const u8,
     version: []const u8,
     description: []const u8,
@@ -41,10 +44,13 @@ pub const Package = struct {
     // Backend reference
     backend: *@import("../backends/backend.zig").Backend,
     
-    pub fn init(allocator: std.mem.Allocator, name: []const u8) !*Package {
-        const self = try allocator.create(Package);
-        self.* = .{
-            .name = name,
+    pub fn init(allocator: std.mem.Allocator, name: []const u8) !Package {
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        const arena_allocator = arena.allocator();
+        
+        return Package{
+            .arena = arena,
+            .name = try arena_allocator.dupe(u8, name),
             .version = "",
             .description = "",
             .url = "",
@@ -68,11 +74,84 @@ pub const Package = struct {
             .source_urls = &.{},
             .backend = undefined,
         };
-        return self;
     }
     
-    pub fn deinit(self: *Package, allocator: std.mem.Allocator) void {
-        allocator.destroy(self);
+    pub fn initFromBackend(allocator: std.mem.Allocator) !Package {
+        return Package{
+            .arena = std.heap.ArenaAllocator.init(allocator),
+            .name = "",
+            .version = "",
+            .description = "",
+            .url = "",
+            .license = "",
+            .arch = &.{},
+            .dependencies = &.{},
+            .make_dependencies = &.{},
+            .optional_dependencies = &.{},
+            .provides = &.{},
+            .conflicts = &.{},
+            .replaces = &.{},
+            .package_type = .aur,
+            .maintainer = "",
+            .votes = 0,
+            .popularity = 0.0,
+            .out_of_date = false,
+            .trust_score = 0.0,
+            .gpg_key = null,
+            .checksum = "",
+            .pkgbuild_url = null,
+            .source_urls = &.{},
+            .backend = undefined,
+        };
+    }
+    
+    pub fn setName(self: *Package, name: []const u8) !void {
+        self.name = try self.arena.allocator().dupe(u8, name);
+    }
+    
+    pub fn setVersion(self: *Package, version: []const u8) !void {
+        self.version = try self.arena.allocator().dupe(u8, version);
+    }
+    
+    pub fn setDescription(self: *Package, description: []const u8) !void {
+        self.description = try self.arena.allocator().dupe(u8, description);
+    }
+    
+    pub fn setUrl(self: *Package, url: []const u8) !void {
+        self.url = try self.arena.allocator().dupe(u8, url);
+    }
+    
+    pub fn setLicense(self: *Package, license: []const u8) !void {
+        self.license = try self.arena.allocator().dupe(u8, license);
+    }
+    
+    pub fn setMaintainer(self: *Package, maintainer: []const u8) !void {
+        self.maintainer = try self.arena.allocator().dupe(u8, maintainer);
+    }
+    
+    pub fn setChecksum(self: *Package, checksum: []const u8) !void {
+        self.checksum = try self.arena.allocator().dupe(u8, checksum);
+    }
+    
+    pub fn setGpgKey(self: *Package, gpg_key: ?[]const u8) !void {
+        if (gpg_key) |key| {
+            self.gpg_key = try self.arena.allocator().dupe(u8, key);
+        } else {
+            self.gpg_key = null;
+        }
+    }
+    
+    pub fn setPkgbuildUrl(self: *Package, pkgbuild_url: ?[]const u8) !void {
+        if (pkgbuild_url) |url| {
+            self.pkgbuild_url = try self.arena.allocator().dupe(u8, url);
+        } else {
+            self.pkgbuild_url = null;
+        }
+    }
+    
+    pub fn deinit(self: *Package) void {
+        // Free all package strings at once via arena allocator
+        self.arena.deinit();
     }
     
     pub fn calculateTrustScore(self: *Package) f32 {

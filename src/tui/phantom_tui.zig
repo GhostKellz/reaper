@@ -1,7 +1,7 @@
 const std = @import("std");
 const phantom = @import("phantom");
 const zsync = @import("zsync");
-const ghostnet = @import("ghostnet");
+const HttpClient = @import("../network/http_client.zig").HttpClient;
 
 const Package = @import("../core/package.zig").Package;
 const TrustLevel = @import("../trust/trust.zig").TrustLevel;
@@ -65,7 +65,7 @@ pub const PackageEntry = struct {
 pub const PhantomTui = struct {
     allocator: std.mem.Allocator,
     runtime: *zsync.Runtime,
-    http_client: *ghostnet.HttpClient,
+    http_client: *HttpClient,
 
     // Phantom app state
     app: phantom.App,
@@ -110,7 +110,7 @@ pub const PhantomTui = struct {
     pub fn init(
         allocator: std.mem.Allocator,
         runtime: *zsync.Runtime,
-        http_client: *ghostnet.HttpClient,
+        http_client: *HttpClient,
     ) !*PhantomTui {
         var self = try allocator.create(PhantomTui);
         errdefer allocator.destroy(self);
@@ -275,20 +275,14 @@ pub const PhantomTui = struct {
     }
 
     fn loadAurPackages(self: *PhantomTui, repo: Repository) !void {
-        // Use ghostnet for HTTP requests with connection pooling
-        const request = try ghostnet.Request.init(self.allocator, .{
-            .method = .GET,
-            .url = try std.fmt.allocPrint(self.allocator, "{s}?type=search&arg=", .{repo.url}),
-            .headers = &.{
-                .{ .name = "User-Agent", .value = "Reaper/1.1.0" },
-            },
-        });
-        defer request.deinit();
+        // Use our HTTP client for AUR requests
+        const url = try std.fmt.allocPrint(self.allocator, "{s}?type=search&arg=", .{repo.url});
+        defer self.allocator.free(url);
 
-        const response = try self.http_client.send(request);
+        var response = try self.http_client.get(url);
         defer response.deinit();
 
-        if (response.status_code != 200) {
+        if (!response.isSuccess()) {
             std.log.err("Failed to fetch from {s}: HTTP {}", .{ repo.name, response.status_code });
             return;
         }
@@ -392,10 +386,10 @@ pub const PhantomTui = struct {
         const url = try std.fmt.allocPrint(self.allocator, "{s}?type=search&arg={s}", .{ repo.url, query });
         defer self.allocator.free(url);
 
-        const response = try self.http_client.get(url);
-        defer response.deinit(self.allocator);
+        var response = try self.http_client.get(url);
+        defer response.deinit();
 
-        if (response.status_code != 200) return;
+        if (!response.isSuccess()) return;
 
         // Parse and add results to packages list
         // Implementation would handle AUR API JSON response

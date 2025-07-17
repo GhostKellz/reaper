@@ -217,7 +217,12 @@ pub const App = struct {
         std.debug.print(":: Searching for {s}...\n", .{query});
 
         const results = try self.core.search(query);
-        defer self.allocator.free(results);
+        defer {
+            for (results) |*pkg| {
+                pkg.deinit();
+            }
+            self.allocator.free(results);
+        }
 
         if (results.len == 0) {
             std.debug.print(":: No packages found\n", .{});
@@ -287,6 +292,9 @@ pub const App = struct {
 
         const pkg_name = args[0];
         if (try self.core.getInfo(pkg_name)) |pkg| {
+            // Note: Package is passed by value, so we can't call deinit on it
+            // The memory is managed by the backend that created it
+            
             std.debug.print("Repository      : {s}\n", .{@tagName(pkg.package_type)});
             std.debug.print("Name            : {s}\n", .{pkg.name});
             std.debug.print("Version         : {s}\n", .{pkg.version});

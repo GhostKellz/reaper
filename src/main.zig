@@ -5,7 +5,7 @@ const PacmanBackend = @import("backends/pacman.zig").PacmanBackend;
 const AurBackend = @import("backends/aur.zig").AurBackend;
 const zsync = @import("zsync");
 const phantom = @import("phantom");
-const ghostnet = @import("ghostnet");
+const HttpClient = @import("network/http_client.zig").HttpClient;
 const AsyncSubprocess = @import("async/subprocess.zig").AsyncSubprocess;
 const PhantomTui = @import("tui/phantom_tui.zig").PhantomTui;
 
@@ -26,8 +26,8 @@ pub fn main() !void {
     });
     defer runtime.deinit();
 
-    // Initialize ghostnet HTTP client
-    var http_client = try ghostnet.HttpClient.init(allocator, runtime);
+    // Initialize custom HTTP client
+    var http_client = HttpClient.init(allocator);
     defer http_client.deinit();
 
     // Create async subprocess handler
@@ -56,7 +56,7 @@ pub fn main() !void {
 
         const aur_backend = try AurBackend.init(allocator);
         defer aur_backend.deinit();
-        // TODO: Add setHttpClient method to AurBackend if needed
+        aur_backend.setHttpClient(http_client);
         try app.core.addBackend(aur_backend.asBackend());
 
         try app.run(args);

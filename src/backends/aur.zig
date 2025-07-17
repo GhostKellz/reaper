@@ -2,10 +2,14 @@ const std = @import("std");
 const Backend = @import("backend.zig").Backend;
 const Package = @import("../core/package.zig").Package;
 const PackageType = @import("../core/package.zig").PackageType;
+const HttpClient = @import("../network/http_client.zig").HttpClient;
+const aurSearch = @import("../network/http_client.zig").aurSearch;
+const aurInfo = @import("../network/http_client.zig").aurInfo;
 
 pub const AurBackend = struct {
     base: Backend,
     aur_url: []const u8,
+    http_client: ?*HttpClient,
     
     const vtable = Backend.VTable{
         .search = search,
@@ -28,6 +32,7 @@ pub const AurBackend = struct {
                 .vtable = &vtable,
             },
             .aur_url = "https://aur.archlinux.org",
+            .http_client = null,
         };
         
         return self;
@@ -41,29 +46,34 @@ pub const AurBackend = struct {
         return &self.base;
     }
     
+    pub fn setHttpClient(self: *AurBackend, client: *HttpClient) void {
+        self.http_client = client;
+    }
+    
     fn search(backend: *Backend, query: []const u8) ![]Package {
         const self = @as(*AurBackend, @fieldParentPtr("base", backend));
         var packages = std.ArrayList(Package).init(backend.allocator);
         defer packages.deinit();
         
-        // Use curl to query AUR RPC
-        const url = try std.fmt.allocPrint(backend.allocator, "{s}/rpc/v5/search/{s}", .{ self.aur_url, query });
-        defer backend.allocator.free(url);
+        // Use HTTP client if available, otherwise fallback to curl
+        const response_body = if (self.http_client) |client| blk: {
+            var response = aurSearch(client, query) catch {
+                break :blk try self.fallbackCurlSearch(backend.allocator, query);
+            };
+            defer response.deinit();
+            
+            if (!response.isSuccess()) {
+                break :blk try self.fallbackCurlSearch(backend.allocator, query);
+            }
+            
+            break :blk try backend.allocator.dupe(u8, response.body);
+        } else try self.fallbackCurlSearch(backend.allocator, query);
         
-        const result = try std.process.Child.run(.{
-            .allocator = backend.allocator,
-            .argv = &.{ "curl", "-s", url },
-        });
-        defer backend.allocator.free(result.stdout);
-        defer backend.allocator.free(result.stderr);
-        
-        if (result.term != .Exited or result.term.Exited != 0) {
-            return packages.toOwnedSlice();
-        }
+        defer backend.allocator.free(response_body);
         
         // Simple JSON parsing for prototype
-        if (std.mem.indexOf(u8, result.stdout, "\"results\":[")) |results_start| {
-            const results_section = result.stdout[results_start + 11..];
+        if (std.mem.indexOf(u8, response_body, "\"results\":[")) |results_start| {
+            const results_section = response_body[results_start + 11..];
             
             // Parse each package entry
             var start: usize = 0;
@@ -84,31 +94,15 @@ pub const AurBackend = struct {
                 const popularity = std.fmt.parseFloat(f32, popularity_str) catch 0.0;
                 const out_of_date = if (out_of_date_str) |v| !std.mem.eql(u8, v, "null") else false;
                 
-                var pkg = Package{
-                    .name = try backend.allocator.dupe(u8, name),
-                    .version = try backend.allocator.dupe(u8, version),
-                    .description = try backend.allocator.dupe(u8, description),
-                    .url = "",
-                    .license = "",
-                    .arch = &.{},
-                    .dependencies = &.{},
-                    .make_dependencies = &.{},
-                    .optional_dependencies = &.{},
-                    .provides = &.{},
-                    .conflicts = &.{},
-                    .replaces = &.{},
-                    .package_type = .aur,
-                    .maintainer = "",
-                    .votes = votes,
-                    .popularity = popularity,
-                    .out_of_date = out_of_date,
-                    .trust_score = 0.0,
-                    .gpg_key = null,
-                    .checksum = "",
-                    .pkgbuild_url = null,
-                    .source_urls = &.{},
-                    .backend = backend,
-                };
+                var pkg = Package.initFromBackend(backend.allocator) catch continue;
+                pkg.setName(name) catch continue;
+                pkg.setVersion(version) catch continue;
+                pkg.setDescription(description) catch continue;
+                pkg.package_type = .aur;
+                pkg.votes = votes;
+                pkg.popularity = popularity;
+                pkg.out_of_date = out_of_date;
+                pkg.backend = backend;
                 
                 // Calculate trust score
                 pkg.trust_score = pkg.calculateTrustScore();
@@ -121,36 +115,46 @@ pub const AurBackend = struct {
         return packages.toOwnedSlice();
     }
     
+    fn fallbackCurlSearch(self: *AurBackend, allocator: std.mem.Allocator, query: []const u8) ![]u8 {
+        const url = try std.fmt.allocPrint(allocator, "{s}/rpc/v5/search/{s}", .{ self.aur_url, query });
+        defer allocator.free(url);
+        
+        const result = try std.process.Child.run(.{
+            .allocator = allocator,
+            .argv = &.{ "curl", "-s", url },
+        });
+        defer allocator.free(result.stderr);
+        
+        if (result.term != .Exited or result.term.Exited != 0) {
+            allocator.free(result.stdout);
+            return try allocator.dupe(u8, "{\"results\":[]}");
+        }
+        
+        return result.stdout;
+    }
+    
     fn getInfo(backend: *Backend, package_name: []const u8) !?Package {
         const self = @as(*AurBackend, @fieldParentPtr("base", backend));
         
         // For testing, return a fake AUR package for test packages
         if (std.mem.startsWith(u8, package_name, "test-")) {
-            var pkg = Package{
-                .name = try backend.allocator.dupe(u8, package_name),
-                .version = try backend.allocator.dupe(u8, "1.0.0-1"),
-                .description = try backend.allocator.dupe(u8, "Test AUR package for security analysis"),
-                .url = try backend.allocator.dupe(u8, "https://example.com"),
-                .license = try backend.allocator.dupe(u8, "MIT"),
-                .arch = &.{},
-                .dependencies = &.{},
-                .make_dependencies = &.{},
-                .optional_dependencies = &.{},
-                .provides = &.{},
-                .conflicts = &.{},
-                .replaces = &.{},
-                .package_type = .aur,
-                .maintainer = try backend.allocator.dupe(u8, "test-maintainer"),
-                .votes = 42,
-                .popularity = 3.14,
-                .out_of_date = false,
-                .trust_score = 5.0,
-                .gpg_key = null,
-                .checksum = "",
-                .pkgbuild_url = try std.fmt.allocPrint(backend.allocator, "{s}/cgit/aur.git/plain/PKGBUILD?h={s}", .{ self.aur_url, package_name }),
-                .source_urls = &.{},
-                .backend = backend,
-            };
+            var pkg = Package.initFromBackend(backend.allocator) catch return null;
+            pkg.setName(package_name) catch return null;
+            pkg.setVersion("1.0.0-1") catch return null;
+            pkg.setDescription("Test AUR package for security analysis") catch return null;
+            pkg.setUrl("https://example.com") catch return null;
+            pkg.setLicense("MIT") catch return null;
+            pkg.setMaintainer("test-maintainer") catch return null;
+            pkg.package_type = .aur;
+            pkg.votes = 42;
+            pkg.popularity = 3.14;
+            pkg.out_of_date = false;
+            pkg.trust_score = 5.0;
+            pkg.backend = backend;
+            
+            const pkgbuild_url = std.fmt.allocPrint(backend.allocator, "{s}/cgit/aur.git/plain/PKGBUILD?h={s}", .{ self.aur_url, package_name }) catch return null;
+            defer backend.allocator.free(pkgbuild_url);
+            pkg.setPkgbuildUrl(pkgbuild_url) catch return null;
             
             // Calculate trust score
             pkg.trust_score = pkg.calculateTrustScore();
@@ -194,31 +198,23 @@ pub const AurBackend = struct {
             const popularity = std.fmt.parseFloat(f32, popularity_str) catch 0.0;
             const out_of_date = if (out_of_date_str) |v| !std.mem.eql(u8, v, "null") else false;
             
-            var pkg = Package{
-                .name = try backend.allocator.dupe(u8, name),
-                .version = try backend.allocator.dupe(u8, version),
-                .description = try backend.allocator.dupe(u8, description),
-                .url = try backend.allocator.dupe(u8, url_field),
-                .license = try backend.allocator.dupe(u8, license),
-                .arch = &.{},
-                .dependencies = &.{},
-                .make_dependencies = &.{},
-                .optional_dependencies = &.{},
-                .provides = &.{},
-                .conflicts = &.{},
-                .replaces = &.{},
-                .package_type = .aur,
-                .maintainer = try backend.allocator.dupe(u8, maintainer),
-                .votes = votes,
-                .popularity = popularity,
-                .out_of_date = out_of_date,
-                .trust_score = 0.0,
-                .gpg_key = null,
-                .checksum = "",
-                .pkgbuild_url = try std.fmt.allocPrint(backend.allocator, "{s}/cgit/aur.git/plain/PKGBUILD?h={s}", .{ self.aur_url, name }),
-                .source_urls = &.{},
-                .backend = backend,
-            };
+            var pkg = Package.initFromBackend(backend.allocator) catch return null;
+            pkg.setName(name) catch return null;
+            pkg.setVersion(version) catch return null;
+            pkg.setDescription(description) catch return null;
+            pkg.setUrl(url_field) catch return null;
+            pkg.setLicense(license) catch return null;
+            pkg.setMaintainer(maintainer) catch return null;
+            pkg.package_type = .aur;
+            pkg.votes = votes;
+            pkg.popularity = popularity;
+            pkg.out_of_date = out_of_date;
+            pkg.trust_score = 0.0;
+            pkg.backend = backend;
+            
+            const pkgbuild_url = std.fmt.allocPrint(backend.allocator, "{s}/cgit/aur.git/plain/PKGBUILD?h={s}", .{ self.aur_url, name }) catch return null;
+            defer backend.allocator.free(pkgbuild_url);
+            pkg.setPkgbuildUrl(pkgbuild_url) catch return null;
             
             // Calculate trust score
             pkg.trust_score = pkg.calculateTrustScore();
@@ -450,8 +446,11 @@ pub const AurBackend = struct {
     
     // Helper function to extract JSON field values
     fn extractJsonField(json: []const u8, field: []const u8) ?[]const u8 {
-        const search_str = std.fmt.allocPrint(std.heap.page_allocator, "\"{s}\":", .{field}) catch return null;
-        defer std.heap.page_allocator.free(search_str);
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer arena.deinit();
+        const allocator = arena.allocator();
+        
+        const search_str = std.fmt.allocPrint(allocator, "\"{s}\":", .{field}) catch return null;
         
         if (std.mem.indexOf(u8, json, search_str)) |field_start| {
             const value_start = field_start + search_str.len;

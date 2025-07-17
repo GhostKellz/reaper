@@ -82,31 +82,17 @@ pub const PacmanBackend = struct {
             const desc = lines.next() orelse "";
             const desc_trimmed = std.mem.trim(u8, desc, " \t");
             
-            const pkg = Package{
-                .name = try backend.allocator.dupe(u8, name),
-                .version = try backend.allocator.dupe(u8, version),
-                .description = try backend.allocator.dupe(u8, desc_trimmed),
-                .url = "",
-                .license = "",
-                .arch = &.{},
-                .dependencies = &.{},
-                .make_dependencies = &.{},
-                .optional_dependencies = &.{},
-                .provides = &.{},
-                .conflicts = &.{},
-                .replaces = &.{},
-                .package_type = .pacman,
-                .maintainer = "Arch Linux",
-                .votes = 0,
-                .popularity = 0.0,
-                .out_of_date = false,
-                .trust_score = 8.0, // High trust for official packages
-                .gpg_key = null,
-                .checksum = "",
-                .pkgbuild_url = null,
-                .source_urls = &.{},
-                .backend = backend,
-            };
+            var pkg = Package.initFromBackend(backend.allocator) catch continue;
+            pkg.setName(name) catch continue;
+            pkg.setVersion(version) catch continue;
+            pkg.setDescription(desc_trimmed) catch continue;
+            pkg.setMaintainer("Arch Linux") catch continue;
+            pkg.package_type = .pacman;
+            pkg.votes = 0;
+            pkg.popularity = 0.0;
+            pkg.out_of_date = false;
+            pkg.trust_score = 8.0; // High trust for official packages
+            pkg.backend = backend;
             
             try packages.append(pkg);
         }
@@ -129,31 +115,15 @@ pub const PacmanBackend = struct {
         }
         
         // Parse package info
-        var pkg = Package{
-            .name = try backend.allocator.dupe(u8, package_name),
-            .version = "",
-            .description = "",
-            .url = "",
-            .license = "",
-            .arch = &.{},
-            .dependencies = &.{},
-            .make_dependencies = &.{},
-            .optional_dependencies = &.{},
-            .provides = &.{},
-            .conflicts = &.{},
-            .replaces = &.{},
-            .package_type = .pacman,
-            .maintainer = "Arch Linux",
-            .votes = 0,
-            .popularity = 0.0,
-            .out_of_date = false,
-            .trust_score = 8.0,
-            .gpg_key = null,
-            .checksum = "",
-            .pkgbuild_url = null,
-            .source_urls = &.{},
-            .backend = backend,
-        };
+        var pkg = Package.initFromBackend(backend.allocator) catch return null;
+        pkg.setName(package_name) catch return null;
+        pkg.setMaintainer("Arch Linux") catch return null;
+        pkg.package_type = .pacman;
+        pkg.votes = 0;
+        pkg.popularity = 0.0;
+        pkg.out_of_date = false;
+        pkg.trust_score = 8.0;
+        pkg.backend = backend;
         
         var lines = std.mem.tokenizeScalar(u8, result.stdout, '\n');
         while (lines.next()) |line| {
