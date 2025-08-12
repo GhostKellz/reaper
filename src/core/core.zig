@@ -45,6 +45,7 @@ pub const Core = struct {
         return results.toOwnedSlice();
     }
 
+
     pub fn getInfo(self: *Core, package_name: []const u8) !?Package {
         for (self.backends.items) |backend| {
             if (try backend.vtable.getInfo(backend, package_name)) |pkg| {

@@ -79,10 +79,10 @@ check_zig_version() {
     local zig_version
     zig_version=$(zig version)
     
-    # Check if Zig version is compatible (0.13.0+)
-    if ! echo "$zig_version" | grep -qE '^0\.(1[3-9]|[2-9][0-9])\.'; then
+    # Check if Zig version is compatible (0.15.0-dev+)
+    if ! echo "$zig_version" | grep -qE '^0\.(15|1[6-9]|[2-9][0-9])\.'; then
         log_warning "Zig version $zig_version may not be compatible"
-        log_warning "Recommended: Zig 0.13.0 or later"
+        log_warning "Required: Zig 0.15.0-dev or later for v2.0 features"
         
         read -p "Continue anyway? [y/N] " -n 1 -r
         echo
@@ -132,10 +132,16 @@ test_binary() {
         exit 1
     fi
     
-    # Test make command
-    if ! ./zig-out/bin/reap make --help &> /dev/null; then
-        log_error "Make command test failed"
+    # Test version command (v2.0 specific)  
+    if ! ./zig-out/bin/reap version 2>&1 | grep -q "2.0.0"; then
+        log_error "Version test failed - not v2.0.0"
+        log_error "Actual output: $(./zig-out/bin/reap version 2>&1 | head -1)"
         exit 1
+    fi
+    
+    # Test trust command (new in v2.0)
+    if ! ./zig-out/bin/reap trust --help &> /dev/null 2>&1; then
+        log_warning "Trust command test failed (may not be critical)"
     fi
     
     log_success "Binary tests passed"
@@ -230,21 +236,26 @@ verify_installation() {
 
 show_completion_message() {
     echo
-    log_success "🎉 Reaper (Zig version) installed successfully!"
+    log_success "🎉 Reaper v2.0.0 (Zig version) installed successfully!"
     echo
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo
     echo "🚀 Quick Start:"
-    echo "   reap search firefox      # Search for packages"
-    echo "   reap install yay-bin     # Install AUR packages"  
-    echo "   reap make kernel --help  # Build custom kernels"
-    echo "   reap make ghostnv --help # Build NVIDIA drivers"
+    echo "   reap search firefox      # Search for packages with trust badges"
+    echo "   reap install yay-bin     # Install AUR packages with security analysis"
+    echo "   reap info firefox        # Show detailed package information"
+    echo "   reap trust firefox       # Comprehensive trust & security analysis"
+    echo "   reap --tui               # Launch modern Phantom TUI interface"
     echo
-    echo "📚 Advanced Features:"
-    echo "   reap make kernel --profile amd-x3d    # AMD X3D optimized kernel"
-    echo "   reap make ghostnv --enable-audio-cancel  # NVIDIA with audio cancellation"
-    echo "   reap make iso --profile gaming        # Custom Arch ISO"
-    echo "   reap trust package-name               # Check package trust score"
+    echo "📚 v2.0 New Features:"
+    echo "   🛡️  Trust Scoring       - Every package gets 0-10 trust score"
+    echo "   🔍 Security Analysis    - 30+ patterns detect suspicious code" 
+    echo "   🔐 GPG Verification     - Auto-import keys and verify signatures"
+    echo "   🎨 Phantom TUI          - Modern terminal interface"
+    echo "   ⚡ zsync Async Runtime  - High-performance parallel operations"
+    echo
+    echo "📊 Trust Badges:"
+    echo "   ⭐ 8.0-10.0 Excellent   ✓ 6.0-7.9 Good   ? 4.0-5.9 Fair   ⚠ <4.0 Low"
     echo
     echo "🔧 Compatibility:"
     echo "   All pacman flags work: reap -S package, reap -Syu, etc."
@@ -260,7 +271,8 @@ show_completion_message() {
 
 main() {
     echo
-    echo "🔨 Reaper (Zig Version) Installation Script"
+    echo "🔨 Reaper v2.0.0 Installation Script"
+    echo "   Trust Scoring • Security Analysis • Phantom TUI • zsync Runtime"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo
     

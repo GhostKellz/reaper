@@ -1,7 +1,7 @@
 #compdef reap
 
 # Zsh completion for reap - The Unified AUR Helper & Build System
-# Generated for reaper v0.2.0
+# Generated for reaper v2.0.0
 
 _reap() {
     local context state state_descr line
@@ -60,6 +60,9 @@ _reap() {
                 profile)
                     _reap_profile_subcommand
                     ;;
+                --tui)
+                    # TUI mode, no additional arguments
+                    ;;
                 -S*)
                     # Pacman-style sync
                     if [[ $words[1] == *s* ]]; then
@@ -117,8 +120,9 @@ _reap_commands() {
         'forge:Build and deploy packages for AUR/Pacman'
         'craft:Artisanal kernel and driver crafting'
         'build-system:Production-ready system and package builds'
-        'trust:Show trust scores for packages'
+        'trust:Show trust scores and security analysis for packages'
         'profile:Manage system profiles'
+        '--tui:Launch Phantom TUI interface'
         'help:Show help message'
         '-S:Sync packages (pacman style)'
         '-Ss:Search packages (pacman style)'
