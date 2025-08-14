@@ -53,19 +53,35 @@ pub const PacmanBackend = struct {
         var packages = std.ArrayList(Package).init(backend.allocator);
         defer packages.deinit();
         
-        const result = try std.process.Child.run(.{
-            .allocator = backend.allocator,
-            .argv = &.{ self.pacman_path, "-Ss", query },
-        });
-        defer backend.allocator.free(result.stdout);
-        defer backend.allocator.free(result.stderr);
-        
-        if (result.term != .Exited or result.term.Exited != 0) {
-            return packages.toOwnedSlice();
-        }
+        // Use async subprocess if available, otherwise fallback to sync
+        const stdout_data = if (self.async_subprocess) |async_proc| blk: {
+            const exec_result = try async_proc.exec(&.{ self.pacman_path, "-Ss", query }, 30000);
+            defer exec_result.deinit(backend.allocator);
+            
+            if (exec_result.exit_code != 0) {
+                return packages.toOwnedSlice();
+            }
+            
+            const stdout_copy = try backend.allocator.dupe(u8, exec_result.stdout);
+            break :blk stdout_copy;
+        } else blk: {
+            const sync_result = try std.process.Child.run(.{
+                .allocator = backend.allocator,
+                .argv = &.{ self.pacman_path, "-Ss", query },
+            });
+            defer backend.allocator.free(sync_result.stderr);
+            
+            if (sync_result.term != .Exited or sync_result.term.Exited != 0) {
+                backend.allocator.free(sync_result.stdout);
+                return packages.toOwnedSlice();
+            }
+            
+            break :blk sync_result.stdout;
+        };
+        defer backend.allocator.free(stdout_data);
         
         // Parse pacman output
-        var lines = std.mem.tokenizeScalar(u8, result.stdout, '\n');
+        var lines = std.mem.tokenizeScalar(u8, stdout_data, '\n');
         while (lines.next()) |line| {
             if (std.mem.startsWith(u8, line, " ")) continue; // Skip description lines
             

@@ -2,6 +2,7 @@ const std = @import("std");
 const core = @import("../core/core.zig");
 const config = @import("../config/config.zig");
 const Package = @import("../core/package.zig").Package;
+const zsync = @import("zsync");
 
 pub const App = struct {
     allocator: std.mem.Allocator,
@@ -13,6 +14,16 @@ pub const App = struct {
         self.* = .{
             .allocator = allocator,
             .core = try core.Core.init(allocator),
+            .config = try config.Config.init(allocator),
+        };
+        return self;
+    }
+    
+    pub fn initWithRuntime(allocator: std.mem.Allocator, runtime: *zsync.Runtime) !*App {
+        const self = try allocator.create(App);
+        self.* = .{
+            .allocator = allocator,
+            .core = try core.Core.initWithRuntime(allocator, runtime),
             .config = try config.Config.init(allocator),
         };
         return self;

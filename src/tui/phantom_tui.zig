@@ -250,7 +250,11 @@ pub const PhantomTui = struct {
         try self.addBackgroundTask(task_id, "Loading packages from repositories...");
 
         // Spawn async task to load packages from all repositories
-        const load_task = try self.runtime.spawn(struct {
+        // TODO: Implement with new zsync Task API - temporarily complete task immediately
+        self.completeBackgroundTask(task_id) catch {};
+        
+        /*
+        // const load_task = try zsync.Task.init(self.allocator, struct {
             fn load(tui: *PhantomTui, bg_task_id: []const u8) !void {
                 defer tui.completeBackgroundTask(bg_task_id) catch {};
 
@@ -272,6 +276,7 @@ pub const PhantomTui = struct {
 
         // Don't await - let it run in background
         _ = load_task;
+        */
     }
 
     fn loadAurPackages(self: *PhantomTui, repo: Repository) !void {
@@ -416,34 +421,16 @@ pub const PhantomTui = struct {
         const task_id = "background_update_check";
         try self.addBackgroundTask(task_id, "Checking for updates...");
 
-        self.update_check_task = try self.runtime.spawn(struct {
-            fn checkUpdates(tui: *PhantomTui, bg_task_id: []const u8) !void {
-                defer tui.completeBackgroundTask(bg_task_id) catch {};
-
-                // Check for system updates every 5 minutes
-                while (true) {
-                    try zsync.time.sleep(300 * 1000); // 5 minutes
-
-                    // Update progress periodically
-                    try tui.updateBackgroundTaskProgress(bg_task_id, 0.5);
-
-                    // Check for updates using async subprocess
-                    const result = try tui.runtime.spawnSubprocess(.{
-                        .argv = &.{"checkupdates"},
-                        .stdout_behavior = .Pipe,
-                        .stderr_behavior = .Ignore,
-                    });
-
-                    const output = try result.stdout.readToEndAlloc(tui.allocator, 1024 * 1024);
-                    defer tui.allocator.free(output);
-
-                    if (output.len > 0) {
-                        // Updates available - notify user
-                        try tui.addBackgroundTask("updates_available", "Updates available! Check Updates tab.");
-                    }
-                }
-            }
-        }.checkUpdates, .{ self, task_id }, .normal);
+        // Temporarily disable background update checker until we implement proper async API
+        self.completeBackgroundTask(task_id) catch {};
+        
+        // TODO: Implement with new zsync Task API
+        // self.update_check_task = try zsync.Task.init(self.allocator, struct {
+        //     fn checkUpdates(tui: *PhantomTui, bg_task_id: []const u8) !void {
+        //         defer tui.completeBackgroundTask(bg_task_id) catch {};
+        //         // Implementation with new zsync API
+        //     }
+        // }.checkUpdates, .{ self, "background_update_check" });
     }
 
     fn handleKeyEvent(self: *PhantomTui, key: phantom.Key) !void {
@@ -584,7 +571,7 @@ pub const PhantomTui = struct {
     fn completeBackgroundTask(self: *PhantomTui, id: []const u8) !void {
         for (self.background_tasks.items, 0..) |task, i| {
             if (std.mem.eql(u8, task.id, id)) {
-                try self.task_monitor.completeTask(id);
+                self.task_monitor.completeTask(id);
                 _ = self.background_tasks.swapRemove(i);
                 self.allocator.free(task.id);
                 self.allocator.free(task.description);

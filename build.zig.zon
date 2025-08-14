@@ -1,11 +1,11 @@
 .{
     .name = .reaper,
-    .version = "2.0.0",
+    .version = "2.1.0",
     .fingerprint = 0xd710829078dbe902,
     .dependencies = .{
         .zsync = .{
             .url = "https://github.com/ghostkellz/zsync/archive/main.tar.gz",
-            .hash = "zsync-0.3.2-KAuhed0XGADaOKjYNl34Ragvca2zBYqvoAsBV-AhkoLS",
+            .hash = "zsync-0.3.3-KAuheT_FGACz6F4bVw-u_EoS4n_LEb7OjyJWEYsRsaiA",
         },
         .phantom = .{
             .url = "https://github.com/ghostkellz/phantom/archive/main.tar.gz",
