@@ -5,7 +5,7 @@
     .dependencies = .{
         .zsync = .{
             .url = "https://github.com/ghostkellz/zsync/archive/main.tar.gz",
-            .hash = "zsync-0.3.3-KAuheT_FGACz6F4bVw-u_EoS4n_LEb7OjyJWEYsRsaiA",
+            .hash = "zsync-0.4.0-KAuhedoAGwAYmcsI2ZJUWHsbjO44KslrU8_56tmgowXc",
         },
         .phantom = .{
             .url = "https://github.com/ghostkellz/phantom/archive/main.tar.gz",
