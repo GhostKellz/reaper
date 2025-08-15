@@ -96,20 +96,18 @@ pub const HttpClient = struct {
         const max_time_str = try std.fmt.allocPrint(self.allocator, "{}", .{self.timeout_ms / 1000});
         defer self.allocator.free(max_time_str);
         
-        const retry_str = try std.fmt.allocPrint(self.allocator, "{}", .{self.max_retries});
-        defer self.allocator.free(retry_str);
         
         const result = try std.process.Child.run(.{
             .allocator = self.allocator,
             .argv = &.{ 
                 "curl", 
                 "-s", 
+                "-f", // Fail on HTTP errors
                 "-L", // Follow redirects
                 "--max-time", max_time_str,
-                "--retry", retry_str,
-                "--retry-delay", "1",
+                "--connect-timeout", "5", // Separate connection timeout
                 "--compressed", // Accept gzip/deflate
-                "-H", "User-Agent: Reaper/1.0.4 (AUR helper)",
+                "-H", "User-Agent: Reaper/2.2.0 (AUR helper)",
                 "-H", "Accept: application/json, */*",
                 url 
             },

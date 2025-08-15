@@ -44,6 +44,16 @@ pub const App = struct {
         const cmd = args[1];
         const cmd_args = args[2..];
 
+        // Handle long flags first (--version, --help, etc.)
+        if (std.mem.eql(u8, cmd, "--version") or std.mem.eql(u8, cmd, "--help")) {
+            if (std.mem.eql(u8, cmd, "--version")) {
+                try self.printVersion();
+            } else if (std.mem.eql(u8, cmd, "--help")) {
+                try self.printHelp();
+            }
+            return;
+        }
+
         // Handle pacman-style flags
         if (std.mem.startsWith(u8, cmd, "-")) {
             try self.handlePacmanStyle(cmd, cmd_args);
@@ -179,7 +189,7 @@ pub const App = struct {
     fn printHelp(self: *App) !void {
         _ = self;
         std.debug.print(
-            \\Reaper v2.0.0 - Zig-Powered AUR Helper & Build System
+            \\Reaper v2.2.0 - Zig-Powered AUR Helper & Build System
             \\
             \\USAGE:
             \\    reap <COMMAND> [OPTIONS] [ARGS]
@@ -245,7 +255,7 @@ pub const App = struct {
 
     fn printVersion(self: *App) !void {
         _ = self;
-        std.debug.print("Reaper v2.0.0 - Unified AUR Helper & Build System\n", .{});
+        std.debug.print("Reaper v2.2.0 - Unified AUR Helper & Build System\n", .{});
         std.debug.print("Built with Zig 0.15-dev and zsync async runtime\n", .{});
         std.debug.print("Features: AUR Search, Trust Scoring, Security Analysis, Phantom TUI\n", .{});
     }
@@ -257,7 +267,7 @@ pub const App = struct {
         }
 
         const query = args[0];
-        std.debug.print(":: Searching for {s}...\n", .{query});
+        std.debug.print("🔍 Searching for packages containing '{s}'...\n", .{query});
 
         const results = try self.core.search(query);
         defer {
@@ -268,7 +278,7 @@ pub const App = struct {
         }
 
         if (results.len == 0) {
-            std.debug.print(":: No packages found\n", .{});
+            std.debug.print("❌ No packages found for '{s}'\n", .{query});
             return;
         }
 
@@ -288,7 +298,7 @@ pub const App = struct {
 
         // Display pacman results first
         if (pacman_pkgs.items.len > 0) {
-            std.debug.print("\n:: Repository packages:\n", .{});
+            std.debug.print("\n📦 Repository packages:\n", .{});
             for (pacman_pkgs.items) |pkg| {
                 const trust_badge = if (pkg.trust_score >= 8.0) "⭐" else if (pkg.trust_score >= 6.0) "✓" else if (pkg.trust_score >= 4.0) "?" else "⚠";
                 std.debug.print("  {s}/{s} {s} [{s}]\n", .{
@@ -305,7 +315,7 @@ pub const App = struct {
 
         // Display AUR results
         if (aur_pkgs.items.len > 0) {
-            std.debug.print("\n:: AUR packages:\n", .{});
+            std.debug.print("\n🔥 AUR packages:\n", .{});
             for (aur_pkgs.items) |pkg| {
                 const trust_badge = if (pkg.trust_score >= 8.0) "⭐" else if (pkg.trust_score >= 6.0) "✓" else if (pkg.trust_score >= 4.0) "?" else "⚠";
                 std.debug.print("  aur/{s} {s} (+{} {d:.2}) [{s}]\n", .{
@@ -334,9 +344,9 @@ pub const App = struct {
         }
 
         const pkg_name = args[0];
-        if (try self.core.getInfo(pkg_name)) |pkg| {
-            // Note: Package is passed by value, so we can't call deinit on it
-            // The memory is managed by the backend that created it
+        if (try self.core.getInfo(pkg_name)) |pkg_const| {
+            var pkg = pkg_const; // Copy to a mutable variable
+            defer pkg.deinit(); // Properly clean up package memory
             
             std.debug.print("Repository      : {s}\n", .{@tagName(pkg.package_type)});
             std.debug.print("Name            : {s}\n", .{pkg.name});

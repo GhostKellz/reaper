@@ -146,11 +146,12 @@ pub const AurBackend = struct {
         
         const result = try std.process.Child.run(.{
             .allocator = allocator,
-            .argv = &.{ "curl", "-s", url },
+            .argv = &.{ "curl", "-s", "--max-time", "10", url },
         });
         defer allocator.free(result.stderr);
         
         if (result.term != .Exited or result.term.Exited != 0) {
+            std.debug.print("⚠️  AUR search timed out or failed (network issues), showing cached/local results only\n", .{});
             allocator.free(result.stdout);
             return try allocator.dupe(u8, "{\"results\":[]}");
         }
@@ -164,7 +165,7 @@ pub const AurBackend = struct {
         
         const result = try std.process.Child.run(.{
             .allocator = allocator,
-            .argv = &.{ "curl", "-s", url },
+            .argv = &.{ "curl", "-s", "--max-time", "10", url },
         });
         defer allocator.free(result.stderr);
         

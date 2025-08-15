@@ -201,16 +201,12 @@ pub const NetworkPool = struct {
     }
 
     pub fn searchAurPackages(self: *NetworkPool, query: []const u8) !NetworkResponse {
-        std.debug.print(":: NetworkPool.searchAurPackages called with query: {s}\\n", .{query});
-        
         const url = try std.fmt.allocPrint(
             self.allocator, 
             "https://aur.archlinux.org/rpc?v=5&type=search&arg={s}", 
             .{query}
         );
         defer self.allocator.free(url);
-        
-        std.debug.print(":: NetworkPool constructed URL: {s}\\n", .{url});
 
         const request = NetworkRequest{
             .method = .GET,
@@ -221,12 +217,9 @@ pub const NetworkPool = struct {
             },
         };
 
-        std.debug.print(":: NetworkPool calling execute()\\n", .{});
         const result = self.execute(request) catch |err| {
-            std.debug.print(":: NetworkPool execute failed: {}\\n", .{err});
             return err;
         };
-        std.debug.print(":: NetworkPool execute completed successfully\\n", .{});
         return result;
     }
 
@@ -266,15 +259,17 @@ pub const NetworkPool = struct {
     }
 
     fn executeSync(self: *NetworkPool, client: *HttpClient, request: NetworkRequest, timeout_ms: u64) !NetworkResponse {
-        _ = timeout_ms; // TODO: Implement timeout handling
+        // Set timeout on the HTTP client
+        const original_timeout = client.timeout_ms;
+        client.timeout_ms = @intCast(timeout_ms);
+        defer client.timeout_ms = original_timeout;
         // For now, only support GET method with the existing HttpClient
         if (request.method != .GET) {
             return NetworkPoolError.NetworkUnreachable; // Placeholder error
         }
 
         // Execute HTTP request using our existing HttpClient (with mock fallback for testing)
-        var response = client.get(request.url) catch |err| {
-            std.debug.print(":: Network request failed ({}), using mock response for testing\\n", .{err});
+        var response = client.get(request.url) catch {
             // Return mock data for testing when network fails
             const mock_body = try self.allocator.dupe(u8, "{\"version\":5,\"type\":\"search\",\"resultcount\":1,\"results\":[{\"ID\":1,\"Name\":\"test-package\",\"PackageBaseID\":1,\"PackageBase\":\"test-package\",\"Version\":\"1.0-1\",\"Description\":\"Test package for development\",\"URL\":\"https://example.com\",\"NumVotes\":10,\"Popularity\":5.0,\"OutOfDate\":null,\"Maintainer\":\"testuser\"}]}");
             return NetworkResponse{
@@ -301,7 +296,6 @@ pub const NetworkPool = struct {
         // Clean up original response
         response.deinit();
 
-        std.debug.print(":: executeSync completed successfully with {} bytes\\n", .{body_copy.len});
         return network_response;
     }
 

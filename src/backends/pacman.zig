@@ -148,13 +148,13 @@ pub const PacmanBackend = struct {
             const value = std.mem.trim(u8, line[colon_pos + 1..], " \t");
             
             if (std.mem.eql(u8, key, "Version")) {
-                pkg.version = try backend.allocator.dupe(u8, value);
+                try pkg.setVersion(value);
             } else if (std.mem.eql(u8, key, "Description")) {
-                pkg.description = try backend.allocator.dupe(u8, value);
+                pkg.description = try pkg.arena.allocator().dupe(u8, value);
             } else if (std.mem.eql(u8, key, "URL")) {
-                pkg.url = try backend.allocator.dupe(u8, value);
+                pkg.url = try pkg.arena.allocator().dupe(u8, value);
             } else if (std.mem.eql(u8, key, "Licenses")) {
-                pkg.license = try backend.allocator.dupe(u8, value);
+                pkg.license = try pkg.arena.allocator().dupe(u8, value);
             }
         }
         

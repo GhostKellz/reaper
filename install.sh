@@ -133,8 +133,8 @@ test_binary() {
     fi
     
     # Test version command (v2.0 specific)  
-    if ! ./zig-out/bin/reap version 2>&1 | grep -q "2.0.0"; then
-        log_error "Version test failed - not v2.0.0"
+    if ! ./zig-out/bin/reap version 2>&1 | grep -q "2.2.0"; then
+        log_error "Version test failed - not v2.2.0"
         log_error "Actual output: $(./zig-out/bin/reap version 2>&1 | head -1)"
         exit 1
     fi
@@ -236,7 +236,7 @@ verify_installation() {
 
 show_completion_message() {
     echo
-    log_success "🎉 Reaper v2.0.0 (Zig version) installed successfully!"
+    log_success "🎉 Reaper v2.2.0 (Zig version) installed successfully!"
     echo
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo
@@ -271,7 +271,7 @@ show_completion_message() {
 
 main() {
     echo
-    echo "🔨 Reaper v2.0.0 Installation Script"
+    echo "🔨 Reaper v2.2.0 Installation Script"
     echo "   Trust Scoring • Security Analysis • Phantom TUI • zsync Runtime"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo
