@@ -342,14 +342,16 @@ pub const AsyncCache = struct {
         return null;
     }
     
-    pub fn getAsync(self: *AsyncCache, key: []const u8) !zsync.task_management.TaskHandle {
-        return try zsync.task_management.Task.spawn(self.allocator, struct {
+    pub fn getAsync(self: *AsyncCache, key: []const u8) !zsync.Future(?[]const u8) {
+        // Use zsync v0.4.0 Future API for better async handling
+        return zsync.Future(?[]const u8).init(self.io, struct {
             fn getCacheEntry(cache: *AsyncCache, cache_key: []const u8) !?[]const u8 {
                 return try cache.get(cache_key);
             }
         }.getCacheEntry, .{ self, key }, .{
             .timeout_ms = 5000,
             .priority = .normal,
+            .execution_model = .auto_detect, // v0.4.0 auto-detection
         });
     }
     
@@ -390,14 +392,17 @@ pub const AsyncCache = struct {
         _ = self.stats.entries_count.fetchAdd(1, .acq_rel);
     }
     
-    pub fn putAsync(self: *AsyncCache, key: []const u8, value: []const u8, ttl_seconds: ?u64) !zsync.task_management.TaskHandle {
-        return try zsync.task_management.Task.spawn(self.allocator, struct {
+    pub fn putAsync(self: *AsyncCache, key: []const u8, value: []const u8, ttl_seconds: ?u64) !zsync.Future(void) {
+        // Use zsync v0.4.0 Future API with enhanced performance
+        return zsync.Future(void).init(self.io, struct {
             fn putCacheEntry(cache: *AsyncCache, cache_key: []const u8, cache_value: []const u8, ttl: ?u64) !void {
                 try cache.put(cache_key, cache_value, ttl);
             }
         }.putCacheEntry, .{ self, key, value, ttl_seconds }, .{
             .timeout_ms = 10000,
-            .priority = .normal,
+            .priority = .high, // Cache writes are high priority
+            .execution_model = .thread_pool, // Optimal for I/O operations
+            .enable_zero_copy = true, // v0.4.0 zero-copy optimization
         });
     }
     

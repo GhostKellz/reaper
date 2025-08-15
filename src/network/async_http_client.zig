@@ -323,8 +323,8 @@ pub const AsyncHttpClient = struct {
         while (std.time.milliTimestamp() < deadline) {
             const bytes_read = stream.read(&buf) catch |err| switch (err) {
                 error.WouldBlock => {
-                    // Use zsync's async wait
-                    try self.io.wait_readable(stream, 100); // 100ms
+                    // Use zsync v0.4.0 enhanced async wait with timeout
+                    try self.io.wait_readable(stream, .{ .timeout_ms = 100, .priority = .normal });
                     continue;
                 },
                 else => return err,

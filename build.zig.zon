@@ -1,6 +1,6 @@
 .{
     .name = .reaper,
-    .version = "2.1.0",
+    .version = "2.1.1",
     .fingerprint = 0xd710829078dbe902,
     .dependencies = .{
         .zsync = .{
