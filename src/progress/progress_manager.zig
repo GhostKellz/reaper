@@ -242,7 +242,7 @@ pub const TaskState = struct {
             .start_time = std.time.milliTimestamp(),
             .cancellation_token = cancel_token,
             .parent_task_id = null,
-            .subtasks = std.ArrayList([]const u8).init(allocator),
+            .subtasks = std.ArrayList([]const u8){},
         };
         return state;
     }
@@ -258,7 +258,7 @@ pub const TaskState = struct {
         for (self.subtasks.items) |subtask_id| {
             allocator.free(subtask_id);
         }
-        self.subtasks.deinit();
+        self.subtasks.deinit(allocator);
         
         allocator.destroy(self);
     }
@@ -287,7 +287,7 @@ pub const TaskState = struct {
     }
     
     pub fn addSubtask(self: *TaskState, allocator: std.mem.Allocator, subtask_id: []const u8) !void {
-        try self.subtasks.append(try allocator.dupe(u8, subtask_id));
+        try self.subtasks.append(allocator, try allocator.dupe(u8, subtask_id));
     }
 };
 
@@ -325,7 +325,7 @@ pub const ProgressManager = struct {
             .allocator = allocator,
             .io = io,
             .tasks = std.StringHashMap(*TaskState).init(allocator),
-            .subscribers = std.ArrayList(ProgressSubscriber).init(allocator),
+            .subscribers = std.ArrayList(ProgressSubscriber){},
             .last_progress = std.StringHashMap(f32).init(allocator),
             .update_queue = try zsync.realtime_streams.RealtimeStream.builder()
                 .config(stream_config)
@@ -372,7 +372,7 @@ pub const ProgressManager = struct {
         for (self.subscribers.items) |*subscriber| {
             subscriber.deinit(self.allocator);
         }
-        self.subscribers.deinit();
+        self.subscribers.deinit(allocator);
         
         // Cleanup progress tracking
         var progress_iter = self.last_progress.iterator();
@@ -477,7 +477,7 @@ pub const ProgressManager = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         
-        try self.subscribers.append(subscriber);
+        try self.subscribers.append(allocator, subscriber);
         _ = self.stats.subscribers_count.fetchAdd(1, .acq_rel);
     }
     
@@ -550,12 +550,12 @@ pub const ProgressManager = struct {
             progress: f32,
             elapsed_time_ms: u64,
         }, undefined)[0])).init(self.allocator);
-        defer statuses.deinit();
+        defer statuses.deinit(self.allocator);
         
         var task_iter = self.tasks.iterator();
         while (task_iter.next()) |entry| {
             const task = entry.value_ptr.*;
-            try statuses.append(.{
+            try statuses.append(self.allocator, .{
                 .id = task.id,
                 .name = task.name,
                 .phase = task.phase.load(.acquire),
@@ -600,7 +600,7 @@ pub const ProgressManager = struct {
             var buffer: [16]u8 = undefined;
             const bytes_read = self.update_queue.read(&buffer) catch |err| switch (err) {
                 error.WouldBlock => {
-                    std.time.sleep(10 * std.time.ns_per_ms); // 10ms
+                    std.Thread.sleep(10 * std.time.ns_per_ms); // 10ms
                     continue;
                 },
                 error.StreamClosed => break,

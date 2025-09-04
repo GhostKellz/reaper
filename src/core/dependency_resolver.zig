@@ -34,8 +34,8 @@ pub const DependencyResolver = struct {
         std.debug.print("🧠 Analyzing dependencies for {} packages...\n", .{packages.len});
         
         var result = ResolutionResult.init(self.allocator);
-        var queue = std.ArrayList([]const u8).init(self.allocator);
-        defer queue.deinit();
+        var queue = std.ArrayList([]const u8){};
+        defer queue.deinit(self.allocator);
         
         var visited = std.HashMap([]const u8, void, std.hash_map.StringContext, std.hash_map.default_max_load_percentage).init(self.allocator);
         defer {
@@ -48,7 +48,7 @@ pub const DependencyResolver = struct {
         
         // Add initial packages to queue
         for (packages) |pkg_name| {
-            try queue.append(try self.allocator.dupe(u8, pkg_name));
+            try queue.append(self.allocator, try self.allocator.dupe(u8, pkg_name));
         }
         
         while (queue.items.len > 0) {
@@ -73,7 +73,7 @@ pub const DependencyResolver = struct {
             // Process dependencies
             for (dep_info.depends) |dep| {
                 if (!visited.contains(dep.name)) {
-                    try queue.append(try self.allocator.dupe(u8, dep.name));
+                    try queue.append(self.allocator, try self.allocator.dupe(u8, dep.name));
                 }
             }
             
@@ -187,17 +187,17 @@ pub const DependencyResolver = struct {
     fn generateInstallationPlan(self: *DependencyResolver, result: *ResolutionResult) !void {
         std.debug.print("\n📋 Installation Plan:\n", .{});
         
-        var repo_packages = std.ArrayList(Package).init(self.allocator);
-        var aur_packages = std.ArrayList(Package).init(self.allocator);
-        defer repo_packages.deinit();
-        defer aur_packages.deinit();
+        var repo_packages = std.ArrayList(Package){};
+        var aur_packages = std.ArrayList(Package){};
+        defer repo_packages.deinit(self.allocator);
+        defer aur_packages.deinit(self.allocator);
         
         // Separate by source
         for (result.packages.items) |pkg| {
             if (pkg.package_type == .aur) {
-                try aur_packages.append(pkg);
+                try aur_packages.append(self.allocator, pkg);
             } else {
-                try repo_packages.append(pkg);
+                try repo_packages.append(self.allocator, pkg);
             }
         }
         
@@ -266,10 +266,10 @@ const DependencyInfo = struct {
     
     pub fn init(allocator: std.mem.Allocator) DependencyInfo {
         return .{
-            .depends = std.ArrayList(Dependency).init(allocator),
-            .conflicts = std.ArrayList(Dependency).init(allocator),
-            .provides = std.ArrayList([]const u8).init(allocator),
-            .optional_depends = std.ArrayList(Dependency).init(allocator),
+            .depends = std.ArrayList(Dependency){},
+            .conflicts = std.ArrayList(Dependency){},
+            .provides = std.ArrayList([]const u8){},
+            .optional_depends = std.ArrayList(Dependency){},
         };
     }
     
@@ -278,28 +278,28 @@ const DependencyInfo = struct {
             allocator.free(dep.name);
             if (dep.version_requirement) |ver| allocator.free(ver);
         }
-        self.depends.deinit();
+        self.depends.deinit(allocator);
         
         for (self.conflicts.items) |dep| {
             allocator.free(dep.name);
             if (dep.version_requirement) |ver| allocator.free(ver);
         }
-        self.conflicts.deinit();
+        self.conflicts.deinit(allocator);
         
         for (self.provides.items) |provide| {
             allocator.free(provide);
         }
-        self.provides.deinit();
+        self.provides.deinit(allocator);
         
         for (self.optional_depends.items) |dep| {
             allocator.free(dep.name);
             if (dep.version_requirement) |ver| allocator.free(ver);
         }
-        self.optional_depends.deinit();
+        self.optional_depends.deinit(allocator);
     }
     
     pub fn addDependency(self: *DependencyInfo, name: []const u8, version: ?[]const u8) !void {
-        try self.depends.append(.{
+        try self.depends.append(allocator, .{
             .name = name,
             .version_requirement = version,
         });
@@ -313,24 +313,24 @@ pub const ResolutionResult = struct {
     
     pub fn init(allocator: std.mem.Allocator) ResolutionResult {
         return .{
-            .packages = std.ArrayList(Package).init(allocator),
-            .conflicts = std.ArrayList(Conflict).init(allocator),
-            .errors = std.ArrayList([]const u8).init(allocator),
+            .packages = std.ArrayList(Package){},
+            .conflicts = std.ArrayList(Conflict){},
+            .errors = std.ArrayList([]const u8){},
         };
     }
     
     pub fn deinit(self: *ResolutionResult, allocator: std.mem.Allocator) void {
-        self.packages.deinit();
+        self.packages.deinit(allocator);
         
         for (self.conflicts.items) |conflict| {
             allocator.free(conflict.description);
         }
-        self.conflicts.deinit();
+        self.conflicts.deinit(allocator);
         
         for (self.errors.items) |error_msg| {
             allocator.free(error_msg);
         }
-        self.errors.deinit();
+        self.errors.deinit(allocator);
     }
     
     pub fn addPackage(self: *ResolutionResult, package: Package) !void {
@@ -340,15 +340,15 @@ pub const ResolutionResult = struct {
                 return; // Already added
             }
         }
-        try self.packages.append(package);
+        try self.packages.append(allocator, package);
     }
     
     pub fn addConflict(self: *ResolutionResult, conflict: Conflict) !void {
-        try self.conflicts.append(conflict);
+        try self.conflicts.append(allocator, conflict);
     }
     
     pub fn addError(self: *ResolutionResult, error_msg: []const u8) !void {
-        try self.errors.append(error_msg);
+        try self.errors.append(allocator, error_msg);
     }
     
     pub fn hasConflicts(self: *ResolutionResult) bool {
@@ -395,7 +395,7 @@ const ConflictResolver = struct {
     pub fn init(allocator: std.mem.Allocator) ConflictResolver {
         return .{
             .allocator = allocator,
-            .resolution_strategies = std.ArrayList(ResolutionStrategy).init(allocator),
+            .resolution_strategies = std.ArrayList(ResolutionStrategy){},
         };
     }
     
@@ -404,7 +404,7 @@ const ConflictResolver = struct {
             self.allocator.free(strategy.name);
             self.allocator.free(strategy.description);
         }
-        self.resolution_strategies.deinit();
+        self.resolution_strategies.deinit(allocator);
     }
     
     pub fn suggestResolution(self: *ConflictResolver, conflict: Conflict) ![]const u8 {

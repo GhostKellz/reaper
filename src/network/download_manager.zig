@@ -15,7 +15,7 @@ pub const DownloadManager = struct {
             .allocator = allocator,
             .http_client = try HttpClient.init(allocator),
             .max_concurrent = max_concurrent,
-            .active_downloads = std.ArrayList(*DownloadTask).init(allocator),
+            .active_downloads = std.ArrayList(*DownloadTask){},
             .connection_pool = ConnectionPool.init(allocator),
         };
         return self;
@@ -25,7 +25,7 @@ pub const DownloadManager = struct {
         for (self.active_downloads.items) |task| {
             task.deinit();
         }
-        self.active_downloads.deinit();
+        self.active_downloads.deinit(self.allocator);
         self.connection_pool.deinit();
         self.http_client.deinit();
         self.allocator.destroy(self);
@@ -34,18 +34,18 @@ pub const DownloadManager = struct {
     pub fn downloadPackages(self: *DownloadManager, packages: []const Package) !void {
         std.debug.print("🚀 Starting parallel downloads for {} packages...\n", .{packages.len});
         
-        var downloads = std.ArrayList(*DownloadTask).init(self.allocator);
+        var downloads = std.ArrayList(*DownloadTask){};
         defer {
             for (downloads.items) |task| {
                 task.deinit();
             }
-            downloads.deinit();
+            downloads.deinit(self.allocator);
         }
         
         // Create download tasks
         for (packages) |pkg| {
             const task = try DownloadTask.init(self.allocator, pkg, self.http_client);
-            try downloads.append(task);
+            try downloads.append(self.allocator, task);
         }
         
         // Execute downloads with concurrency limit
@@ -84,7 +84,7 @@ pub const DownloadManager = struct {
             }
             
             // Small delay to prevent busy waiting
-            std.time.sleep(10 * std.time.ns_per_ms);
+            std.Thread.sleep(10 * std.time.ns_per_ms);
         }
         
         std.debug.print("🎉 All downloads completed!\n", .{});
@@ -99,7 +99,7 @@ pub const DownloadManager = struct {
         while (!task.isComplete()) {
             const progress = task.getProgress();
             std.debug.print("\r📥 Progress: {d:.1}% ({} KB/s)", .{ progress.percentage, progress.speed_kbps });
-            std.time.sleep(100 * std.time.ns_per_ms);
+            std.Thread.sleep(100 * std.time.ns_per_ms);
         }
         
         if (task.hasError()) {
@@ -301,13 +301,13 @@ const ConnectionPool = struct {
         const now = std.time.timestamp();
         const timeout = 300; // 5 minutes
         
-        var to_remove = std.ArrayList([]const u8).init(self.allocator);
-        defer to_remove.deinit();
+        var to_remove = std.ArrayList([]const u8){};
+        defer to_remove.deinit(self.allocator);
         
         var iterator = self.connections.iterator();
         while (iterator.next()) |entry| {
             if (now - entry.value_ptr.*.last_used > timeout) {
-                try to_remove.append(entry.key_ptr.*);
+                try to_remove.append(self.allocator, entry.key_ptr.*);
             }
         }
         

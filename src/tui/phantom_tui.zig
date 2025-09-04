@@ -144,11 +144,11 @@ pub const PhantomTui = struct {
             .task_monitor = self.task_monitor,
             .package_list = self.package_list,
             .progress_bar = self.progress_bar,
-            .packages = std.ArrayList(PackageEntry).init(allocator),
-            .search_query = std.ArrayList(u8).init(allocator),
-            .repositories = std.ArrayList(Repository).init(allocator),
-            .background_tasks = std.ArrayList(BackgroundTask).init(allocator),
-            .install_tasks = std.ArrayList(u32).init(allocator),
+            .packages = std.ArrayList(PackageEntry){},
+            .search_query = std.ArrayList(u8){},
+            .repositories = std.ArrayList(Repository){},
+            .background_tasks = std.ArrayList(BackgroundTask){},
+            .install_tasks = std.ArrayList(u32){},
         };
 
         // Initialize default repositories
@@ -176,11 +176,11 @@ pub const PhantomTui = struct {
         }
 
         // Cleanup collections
-        self.packages.deinit();
-        self.search_query.deinit();
-        self.repositories.deinit();
-        self.background_tasks.deinit();
-        self.install_tasks.deinit();
+        self.packages.deinit(self.allocator);
+        self.search_query.deinit(self.allocator);
+        self.repositories.deinit(self.allocator);
+        self.background_tasks.deinit(self.allocator);
+        self.install_tasks.deinit(self.allocator);
 
         // Cleanup phantom app
         self.app.deinit();
@@ -201,13 +201,13 @@ pub const PhantomTui = struct {
 
     fn initializeRepositories(self: *PhantomTui) !void {
         // Add default repositories
-        try self.repositories.append(.{
+        try self.repositories.append(self.allocator, .{
             .name = "AUR",
             .url = "https://aur.archlinux.org/rpc",
             .source = .aur,
         });
 
-        try self.repositories.append(.{
+        try self.repositories.append(self.allocator, .{
             .name = "Chaotic AUR",
             .url = "https://aur.chaotic.cx/rpc",
             .source = .chaotic_aur,
@@ -234,7 +234,7 @@ pub const PhantomTui = struct {
             if (std.mem.startsWith(u8, trimmed, "[") and std.mem.endsWith(u8, trimmed, "]")) {
                 const repo_name = trimmed[1 .. trimmed.len - 1];
                 if (!std.mem.eql(u8, repo_name, "options")) {
-                    try self.repositories.append(.{
+                    try self.repositories.append(self.allocator, .{
                         .name = try self.allocator.dupe(u8, repo_name),
                         .url = "", // Will be populated from server URLs
                         .source = .pacman,
@@ -342,7 +342,7 @@ pub const PhantomTui = struct {
                 .conflicts = &.{},
             };
 
-            try self.packages.append(.{
+            try self.packages.append(self.allocator, .{
                 .package = package,
                 .source = .pacman,
                 .install_status = .not_installed, // Would check actual status
@@ -447,7 +447,7 @@ pub const PhantomTui = struct {
                 else => {
                     // Add to search query if in search mode
                     if (self.mode == .search_results) {
-                        try self.search_query.append(c);
+                        try self.search_query.append(self.allocator, c);
                     }
                 },
             },
@@ -516,7 +516,7 @@ pub const PhantomTui = struct {
             }
         }.install, .{ self, package_entry, task_id }, .normal);
 
-        try self.install_tasks.append(install_task);
+        try self.install_tasks.append(self.allocator, install_task);
     }
 
     fn showDependencies(self: *PhantomTui) !void {
@@ -550,7 +550,7 @@ pub const PhantomTui = struct {
 
     // Helper functions for background task management
     fn addBackgroundTask(self: *PhantomTui, id: []const u8, description: []const u8) !void {
-        try self.background_tasks.append(.{
+        try self.background_tasks.append(self.allocator, .{
             .id = try self.allocator.dupe(u8, id),
             .description = try self.allocator.dupe(u8, description),
         });

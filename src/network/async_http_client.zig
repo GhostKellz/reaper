@@ -230,8 +230,8 @@ pub const AsyncHttpClient = struct {
                 .PATCH => "PATCH",
             };
 
-            var request_builder = std.ArrayList(u8).init(self.allocator);
-            defer request_builder.deinit();
+            var request_builder = std.ArrayList(u8){};
+            defer request_builder.deinit(self.allocator);
 
             // Request line
             try request_builder.writer().print("{s} {s}{s} HTTP/1.1\r\n", .{ method_str, path, query });
@@ -311,8 +311,8 @@ pub const AsyncHttpClient = struct {
     }
 
     fn readResponseWithTimeout(self: *AsyncHttpClient, stream: zsync.TcpStream, timeout_ms: u64) ![]u8 {
-        var response_data = std.ArrayList(u8).init(self.allocator);
-        defer response_data.deinit();
+        var response_data = std.ArrayList(u8){};
+        defer response_data.deinit(self.allocator);
 
         const deadline = std.time.milliTimestamp() + @as(i64, @intCast(timeout_ms));
         var buf: [8192]u8 = undefined;
@@ -389,8 +389,8 @@ pub const AsyncHttpClient = struct {
         const status_text = status_parts.rest();
 
         // Parse headers
-        var headers = std.ArrayList(HttpHeader).init(self.allocator);
-        defer headers.deinit();
+        var headers = std.ArrayList(HttpHeader){};
+        defer headers.deinit(self.allocator);
 
         var lines = std.mem.split(u8, headers_section[first_line_end + 2..], "\r\n");
         while (lines.next()) |line| {
@@ -400,7 +400,7 @@ pub const AsyncHttpClient = struct {
                 const name = std.mem.trim(u8, line[0..colon], " \t");
                 const value = std.mem.trim(u8, line[colon + 1..], " \t");
                 
-                try headers.append(.{
+                try headers.append(self.allocator, .{
                     .name = try self.allocator.dupe(u8, name),
                     .value = try self.allocator.dupe(u8, value),
                 });

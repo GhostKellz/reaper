@@ -142,7 +142,7 @@ pub const SecurityRuleEngine = struct {
         const engine = try allocator.create(SecurityRuleEngine);
         engine.* = SecurityRuleEngine{
             .allocator = allocator,
-            .rules = std.ArrayList(SecurityRule).init(allocator),
+            .rules = std.ArrayList(SecurityRule){},
             .custom_rules = std.StringHashMap(SecurityRule).init(allocator),
             .enabled_categories = std.EnumSet(SecurityViolation.ViolationCategory).initFull(),
         };
@@ -157,7 +157,7 @@ pub const SecurityRuleEngine = struct {
         for (self.rules.items) |*rule| {
             rule.deinit(self.allocator);
         }
-        self.rules.deinit();
+        self.rules.deinit(self.allocator);
         
         var custom_iter = self.custom_rules.iterator();
         while (custom_iter.next()) |entry| {
@@ -237,7 +237,7 @@ pub const SecurityRuleEngine = struct {
     
     fn addRule(self: *SecurityRuleEngine, id: []const u8, name: []const u8, pattern: []const u8, severity: SecurityLevel, category: SecurityViolation.ViolationCategory) !void {
         const rule = try SecurityRule.init(self.allocator, id, name, pattern, severity, category);
-        try self.rules.append(rule);
+        try self.rules.append(self.allocator, rule);
     }
 };
 
@@ -273,7 +273,7 @@ pub const ConcurrentSecurityScanner = struct {
         scanner.* = ConcurrentSecurityScanner{
             .allocator = allocator,
             .rule_engine = try SecurityRuleEngine.init(allocator),
-            .scan_queue = std.ArrayList(ScanTask).init(allocator),
+            .scan_queue = std.ArrayList(ScanTask){},
             .worker_threads = try allocator.alloc(std.Thread, max_workers),
             .results = std.StringHashMap(SecurityScanResult).init(allocator),
             .mutex = std.Thread.RwLock{},
@@ -306,7 +306,7 @@ pub const ConcurrentSecurityScanner = struct {
         
         // Cleanup
         self.allocator.free(self.worker_threads);
-        self.scan_queue.deinit();
+        self.scan_queue.deinit(self.allocator);
         self.rule_engine.deinit();
         
         // Cleanup results
@@ -330,7 +330,10 @@ pub const ConcurrentSecurityScanner = struct {
         const file = try std.fs.openFileAbsolute(file_path, .{});
         defer file.close();
         
-        const content = try file.readToEndAlloc(self.allocator, 1024 * 1024); // 1MB limit
+        const file_size = try file.getEndPos();
+        if (file_size > 1024 * 1024) return error.FileTooLarge;
+        const content = try self.allocator.alloc(u8, file_size);
+        _ = try file.readAll(content); // 1MB limit
         
         // Create scan task
         const task = ScanTask{
@@ -343,7 +346,7 @@ pub const ConcurrentSecurityScanner = struct {
         
         // Enqueue task (simplified - would use proper concurrent queue)
         self.mutex.lock();
-        try self.scan_queue.append(task);
+        try self.scan_queue.append(self.allocator, task);
         self.mutex.unlock();
         
         return task_id;
@@ -353,7 +356,10 @@ pub const ConcurrentSecurityScanner = struct {
         const file = try std.fs.openFileAbsolute(file_path, .{});
         defer file.close();
         
-        const content = try file.readToEndAlloc(self.allocator, 1024 * 1024);
+        const file_size = try file.getEndPos();
+        if (file_size > 1024 * 1024) return error.FileTooLarge;
+        const content = try self.allocator.alloc(u8, file_size);
+        _ = try file.readAll(content);
         defer self.allocator.free(content);
         
         return try self.analyzeContent(file_path, content);
@@ -373,7 +379,7 @@ pub const ConcurrentSecurityScanner = struct {
             if (self.getResult(task_id)) |result| {
                 return result;
             }
-            std.time.sleep(10 * std.time.ns_per_ms);
+            std.Thread.sleep(10 * std.time.ns_per_ms);
         }
         
         return null;
@@ -389,7 +395,7 @@ pub const ConcurrentSecurityScanner = struct {
             self.mutex.unlock();
             
             const task = maybe_task orelse {
-                std.time.sleep(10 * std.time.ns_per_ms);
+                std.Thread.sleep(10 * std.time.ns_per_ms);
                 continue;
             };
             
@@ -440,11 +446,11 @@ pub const ConcurrentSecurityScanner = struct {
     fn analyzeContent(self: *ConcurrentSecurityScanner, file_path: []const u8, content: []const u8) !SecurityScanResult {
         const start_time = std.time.milliTimestamp();
         
-        var violations = std.ArrayList(SecurityViolation).init(self.allocator);
-        defer violations.deinit();
+        var violations = std.ArrayList(SecurityViolation){};
+        defer violations.deinit(self.allocator);
         
-        var warnings = std.ArrayList([]const u8).init(self.allocator);
-        defer warnings.deinit();
+        var warnings = std.ArrayList([]const u8){};
+        defer warnings.deinit(self.allocator);
         
         // Split content into lines for analysis
         var line_iter = std.mem.splitScalar(u8, content, '\n');
@@ -472,7 +478,7 @@ pub const ConcurrentSecurityScanner = struct {
                     violation.code_snippet = try self.allocator.dupe(u8, std.mem.trim(u8, line, " \t"));
                     violation.recommendation = try self.allocator.dupe(u8, rule.recommendation);
                     
-                    try violations.append(violation);
+                    try violations.append(self.allocator, violation);
                 }
             }
             
@@ -493,13 +499,13 @@ pub const ConcurrentSecurityScanner = struct {
         
         return SecurityScanResult{
             .file_path = try self.allocator.dupe(u8, file_path),
-            .violations = try violations.toOwnedSlice(),
+            .violations = try violations.toOwnedSlice(self.allocator),
             .overall_risk = overall_risk,
             .scan_time_ms = scan_time,
             .lines_analyzed = line_number,
             .rules_applied = rules_applied,
             .safe_for_install = safe_for_install,
-            .warnings = try warnings.toOwnedSlice(),
+            .warnings = try warnings.toOwnedSlice(self.allocator),
             .allocator = self.allocator,
         };
     }
@@ -549,12 +555,12 @@ pub const ConcurrentSecurityScanner = struct {
             violation.code_snippet = try self.allocator.dupe(u8, line[0..@min(line.len, 100)]);
             violation.recommendation = try self.allocator.dupe(u8, "Review for potential obfuscation or encoded malicious content");
             
-            try violations.append(violation);
+            try violations.append(self.allocator, violation);
         }
         
         // URL reputation checking (simplified)
         if (std.mem.indexOf(u8, line, "http") != null) {
-            try warnings.append(try self.allocator.dupe(u8, "Network access detected - verify URL reputation"));
+            try warnings.append(self.allocator, try self.allocator.dupe(u8, "Network access detected - verify URL reputation"));
         }
         
         // Suspicious command combinations
@@ -569,7 +575,7 @@ pub const ConcurrentSecurityScanner = struct {
             violation.code_snippet = try self.allocator.dupe(u8, line);
             violation.recommendation = try self.allocator.dupe(u8, "Manual review required for command sequence");
             
-            try violations.append(violation);
+            try violations.append(self.allocator, violation);
         }
     }
     

@@ -215,7 +215,7 @@ pub const AsyncCache = struct {
             .io = io,
             .config = config,
             .entries = std.StringHashMap(*CacheEntry).init(allocator),
-            .access_order = std.ArrayList([]const u8).init(allocator),
+            .access_order = std.ArrayList([]const u8){},
             .frequency_map = std.StringHashMap(u64).init(allocator),
             .stats = CacheStats{
                 .hits = std.atomic.Value(u64).init(0),
@@ -291,7 +291,7 @@ pub const AsyncCache = struct {
         for (self.access_order.items) |key| {
             self.allocator.free(key);
         }
-        self.access_order.deinit();
+        self.access_order.deinit(self.allocator);
         
         var freq_iter = self.frequency_map.iterator();
         while (freq_iter.next()) |entry| {
@@ -478,8 +478,8 @@ pub const AsyncCache = struct {
         defer self.mutex.unlock();
         
         var invalidated_count: u32 = 0;
-        var keys_to_remove = std.ArrayList([]const u8).init(self.allocator);
-        defer keys_to_remove.deinit();
+        var keys_to_remove = std.ArrayList([]const u8){};
+        defer keys_to_remove.deinit(self.allocator);
         
         // Find entries with matching tag
         var entry_iter = self.entries.iterator();
@@ -487,7 +487,7 @@ pub const AsyncCache = struct {
             const cache_entry = entry.value_ptr.*;
             for (cache_entry.metadata.tags) |entry_tag| {
                 if (std.mem.eql(u8, entry_tag, tag)) {
-                    keys_to_remove.append(entry.key_ptr.*) catch continue;
+                    keys_to_remove.append(self.allocator, entry.key_ptr.*) catch continue;
                     break;
                 }
             }
@@ -679,7 +679,7 @@ pub const AsyncCache = struct {
         
         while (!self.shutdown.load(.acquire)) {
             const interval_ms = self.config.persistence_interval_seconds * 1000;
-            std.time.sleep(interval_ms * std.time.ns_per_ms);
+            std.Thread.sleep(interval_ms * std.time.ns_per_ms);
             
             if (self.shutdown.load(.acquire)) break;
             
@@ -696,7 +696,7 @@ pub const AsyncCache = struct {
         
         while (!self.shutdown.load(.acquire)) {
             const interval_ms = self.config.auto_cleanup_interval_seconds * 1000;
-            std.time.sleep(interval_ms * std.time.ns_per_ms);
+            std.Thread.sleep(interval_ms * std.time.ns_per_ms);
             
             if (self.shutdown.load(.acquire)) break;
             
@@ -711,14 +711,14 @@ pub const AsyncCache = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         
-        var keys_to_remove = std.ArrayList([]const u8).init(self.allocator);
-        defer keys_to_remove.deinit();
+        var keys_to_remove = std.ArrayList([]const u8){};
+        defer keys_to_remove.deinit(self.allocator);
         
         // Find expired entries
         var entry_iter = self.entries.iterator();
         while (entry_iter.next()) |entry| {
             if (entry.value_ptr.*.isExpired()) {
-                keys_to_remove.append(entry.key_ptr.*) catch continue;
+                keys_to_remove.append(self.allocator, entry.key_ptr.*) catch continue;
             }
         }
         

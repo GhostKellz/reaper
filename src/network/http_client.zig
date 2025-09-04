@@ -27,7 +27,7 @@ pub const HttpClient = struct {
         while (retry < self.max_retries) : (retry += 1) {
             const response = self.getInternal(url) catch |err| {
                 if (retry == self.max_retries - 1) return err;
-                std.time.sleep(std.time.ns_per_ms * 1000 * @as(u64, retry + 1)); // Exponential backoff
+                std.Thread.sleep(std.time.ns_per_ms * 1000 * @as(u64, retry + 1)); // Exponential backoff
                 continue;
             };
             return response;
@@ -66,8 +66,8 @@ pub const HttpClient = struct {
         _ = try conn.writeAll(request);
 
         // Read response
-        var response_data = std.ArrayList(u8).init(self.allocator);
-        defer response_data.deinit();
+        var response_data = std.ArrayList(u8){};
+        defer response_data.deinit(self.allocator);
 
         var buf: [8192]u8 = undefined;
         const start_time = std.time.milliTimestamp();
@@ -80,13 +80,13 @@ pub const HttpClient = struct {
             
             const bytes_read = conn.read(&buf) catch |err| switch (err) {
                 error.WouldBlock => {
-                    std.time.sleep(std.time.ns_per_ms * 10);
+                    std.Thread.sleep(std.time.ns_per_ms * 10);
                     continue;
                 },
                 else => return err,
             };
             if (bytes_read == 0) break;
-            try response_data.appendSlice(buf[0..bytes_read]);
+            try response_data.appendSlice(self.allocator, buf[0..bytes_read]);
         }
 
         return try self.parseResponse(response_data.items);

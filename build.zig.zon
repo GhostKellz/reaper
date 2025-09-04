@@ -1,15 +1,15 @@
 .{
     .name = .reaper,
-    .version = "2.2.0",
+    .version = "2.2.1",
     .fingerprint = 0xd710829078dbe902,
     .dependencies = .{
         .zsync = .{
             .url = "https://github.com/ghostkellz/zsync/archive/main.tar.gz",
-            .hash = "zsync-0.4.0-KAuhedoAGwAYmcsI2ZJUWHsbjO44KslrU8_56tmgowXc",
+            .hash = "zsync-0.4.1-KAuheT79GgBDF8ijwGGdmHwXlYboSpCDOj12VHzTQKaV",
         },
         .phantom = .{
             .url = "https://github.com/ghostkellz/phantom/archive/main.tar.gz",
-            .hash = "phantom-0.3.0-E0eWBClECACW3v3DoGU5M1Hv6QxZIEgvbMDsT9U4xOup",
+            .hash = "phantom-0.3.2-E0eWBBZICAA33xwmFeWlNQL4sNYt1MC4ZsLu0yjPL0WS",
         },
     },
     .paths = .{

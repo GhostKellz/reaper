@@ -283,15 +283,15 @@ pub const App = struct {
         }
 
         // Group by backend
-        var pacman_pkgs = std.ArrayList(Package).init(self.allocator);
-        var aur_pkgs = std.ArrayList(Package).init(self.allocator);
-        defer pacman_pkgs.deinit();
-        defer aur_pkgs.deinit();
+        var pacman_pkgs = std.ArrayList(Package){};
+        var aur_pkgs = std.ArrayList(Package){};
+        defer pacman_pkgs.deinit(self.allocator);
+        defer aur_pkgs.deinit(self.allocator);
 
         for (results) |pkg| {
             switch (pkg.package_type) {
-                .pacman => try pacman_pkgs.append(pkg),
-                .aur => try aur_pkgs.append(pkg),
+                .pacman => try pacman_pkgs.append(self.allocator, pkg),
+                .aur => try aur_pkgs.append(self.allocator, pkg),
                 else => {},
             }
         }

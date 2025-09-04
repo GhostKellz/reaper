@@ -66,8 +66,8 @@ pub const AurBackend = struct {
     
     fn search(backend: *Backend, query: []const u8) ![]Package {
         const self = @as(*AurBackend, @fieldParentPtr("base", backend));
-        var packages = std.ArrayList(Package).init(backend.allocator);
-        defer packages.deinit();
+        var packages = std.ArrayList(Package){};
+        defer packages.deinit(backend.allocator);
         
         // Use NetworkPool if available, otherwise fallback to HTTP client or curl
         const response_body = if (self.network_pool) |pool| blk: {
@@ -132,12 +132,12 @@ pub const AurBackend = struct {
                 // Calculate trust score
                 pkg.trust_score = pkg.calculateTrustScore();
                 
-                try packages.append(pkg);
+                try packages.append(backend.allocator, pkg);
                 start = actual_start + pkg_end + 1;
             }
         }
         
-        return packages.toOwnedSlice();
+        return packages.toOwnedSlice(backend.allocator);
     }
     
     fn fallbackCurlSearch(self: *AurBackend, allocator: std.mem.Allocator, query: []const u8) ![]u8 {

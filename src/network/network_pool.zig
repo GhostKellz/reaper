@@ -72,7 +72,7 @@ pub const NetworkPool = struct {
             .allocator = allocator,
             .runtime = runtime,
             .config = config,
-            .http_clients = std.ArrayList(*HttpClient).init(allocator),
+            .http_clients = std.ArrayList(*HttpClient){},
             .active_connections = std.atomic.Value(u32).init(0),
             .mutex = std.Thread.Mutex{},
         };
@@ -81,7 +81,7 @@ pub const NetworkPool = struct {
         const initial_clients = @min(config.max_connections / 4, 5);
         for (0..initial_clients) |_| {
             const client = HttpClient.init(allocator);
-            try self.http_clients.append(client);
+            try self.http_clients.append(allocator, client);
         }
 
         return self;
@@ -92,7 +92,7 @@ pub const NetworkPool = struct {
         for (self.http_clients.items) |client| {
             client.deinit();
         }
-        self.http_clients.deinit();
+        self.http_clients.deinit(self.allocator);
         self.allocator.destroy(self);
     }
 
@@ -248,7 +248,7 @@ pub const NetworkPool = struct {
 
         // Return client to pool if under capacity
         if (self.http_clients.items.len < self.config.max_connections / 2) {
-            self.http_clients.append(client) catch {
+            self.http_clients.append(self.allocator, client) catch {
                 // If append fails, clean up the client
                 client.deinit();
             };

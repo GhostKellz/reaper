@@ -15,7 +15,7 @@ pub const Core = struct {
         const self = try allocator.create(Core);
         self.* = .{
             .allocator = allocator,
-            .backends = std.ArrayList(*Backend).init(allocator),
+            .backends = std.ArrayList(*Backend){},
             .installed_packages = std.StringHashMap(Package).init(allocator),
             .security_manager = try SecurityManager.init(allocator),
             .runtime = null,
@@ -27,7 +27,7 @@ pub const Core = struct {
         const self = try allocator.create(Core);
         self.* = .{
             .allocator = allocator,
-            .backends = std.ArrayList(*Backend).init(allocator),
+            .backends = std.ArrayList(*Backend){},
             .installed_packages = std.StringHashMap(Package).init(allocator),
             .security_manager = try SecurityManager.init(allocator),
             .runtime = runtime,
@@ -36,14 +36,14 @@ pub const Core = struct {
     }
 
     pub fn deinit(self: *Core) void {
-        self.backends.deinit();
+        self.backends.deinit(self.allocator);
         self.installed_packages.deinit();
         self.security_manager.deinit();
         self.allocator.destroy(self);
     }
 
     pub fn addBackend(self: *Core, backend: *Backend) !void {
-        try self.backends.append(backend);
+        try self.backends.append(self.allocator, backend);
     }
 
     pub fn search(self: *Core, query: []const u8) ![]Package {
@@ -53,35 +53,35 @@ pub const Core = struct {
         }
         
         // Fallback to sequential search
-        var results = std.ArrayList(Package).init(self.allocator);
-        defer results.deinit();
+        var results = std.ArrayList(Package){};
+        defer results.deinit(self.allocator);
 
         // Search across all backends
         for (self.backends.items) |backend| {
             const backend_results = try backend.vtable.search(backend, query);
             defer self.allocator.free(backend_results);
-            try results.appendSlice(backend_results);
+            try results.appendSlice(self.allocator, backend_results);
         }
 
-        return results.toOwnedSlice();
+        return results.toOwnedSlice(self.allocator);
     }
     
     pub fn searchParallel(self: *Core, runtime: *zsync.Runtime, query: []const u8) ![]Package {
         _ = runtime; // Async runtime integration available for future enhancement
         
         // Use sequential search with improved performance
-        var merged_results = std.ArrayList(Package).init(self.allocator);
-        defer merged_results.deinit();
+        var merged_results = std.ArrayList(Package){};
+        defer merged_results.deinit(self.allocator);
         
         // Search across all backends
         for (self.backends.items) |backend| {
             const backend_results = try backend.vtable.search(backend, query);
             defer self.allocator.free(backend_results);
-            try merged_results.appendSlice(backend_results);
+            try merged_results.appendSlice(self.allocator, backend_results);
         }
         
         std.debug.print(":: Parallel search completed: {} results from {} backends\n", .{ merged_results.items.len, self.backends.items.len });
-        return merged_results.toOwnedSlice();
+        return merged_results.toOwnedSlice(self.allocator);
     }
 
 

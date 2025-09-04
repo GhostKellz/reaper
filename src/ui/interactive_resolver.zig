@@ -164,45 +164,45 @@ pub const InteractiveResolver = struct {
     }
     
     fn generateSmartSuggestions(self: *InteractiveResolver, conflict: Conflict) ![]SmartSuggestion {
-        var suggestions = std.ArrayList(SmartSuggestion).init(self.allocator);
+        var suggestions = std.ArrayList(SmartSuggestion){};
         
         // AI-powered conflict analysis
         switch (conflict.conflict_type) {
             .package_conflict => {
-                try suggestions.append(.{
+                try suggestions.append(self.allocator, .{
                     .description = try std.fmt.allocPrint(self.allocator, "Remove {} (likely outdated or replaced)", .{conflict.package_b}),
                     .confidence = 85,
                     .rationale = try std.fmt.allocPrint(self.allocator, "Package conflicts often indicate superseded packages"),
                 });
                 
-                try suggestions.append(.{
+                try suggestions.append(self.allocator, .{
                     .description = try std.fmt.allocPrint(self.allocator, "Keep both packages with --force (risky)"),
                     .confidence = 30,
                     .rationale = try std.fmt.allocPrint(self.allocator, "May cause file conflicts and system instability"),
                 });
             },
             .version_conflict => {
-                try suggestions.append(.{
+                try suggestions.append(self.allocator, .{
                     .description = try std.fmt.allocPrint(self.allocator, "Upgrade {} to satisfy dependency", .{conflict.package_b}),
                     .confidence = 92,
                     .rationale = try std.fmt.allocPrint(self.allocator, "Version conflicts are best resolved by upgrading dependencies"),
                 });
                 
-                try suggestions.append(.{
+                try suggestions.append(self.allocator, .{
                     .description = try std.fmt.allocPrint(self.allocator, "Find compatible version of {}", .{conflict.package_a}),
                     .confidence = 75,
                     .rationale = try std.fmt.allocPrint(self.allocator, "Downgrading the requesting package may work"),
                 });
             },
             .file_conflict => {
-                try suggestions.append(.{
+                try suggestions.append(self.allocator, .{
                     .description = try std.fmt.allocPrint(self.allocator, "Remove {} (file overlap detected)", .{conflict.package_b}),
                     .confidence = 88,
                     .rationale = try std.fmt.allocPrint(self.allocator, "File conflicts indicate packages provide same functionality"),
                 });
             },
             .dependency_cycle => {
-                try suggestions.append(.{
+                try suggestions.append(self.allocator, .{
                     .description = try std.fmt.allocPrint(self.allocator, "Break cycle by installing {} first", .{conflict.package_a}),
                     .confidence = 70,
                     .rationale = try std.fmt.allocPrint(self.allocator, "Dependency cycles can be resolved by changing install order"),
@@ -276,24 +276,24 @@ pub const InteractiveResolver = struct {
     
     fn findAlternatives(self: *InteractiveResolver, package_name: []const u8) ![]Alternative {
         // Simulate finding alternatives (in real implementation, would query repos)
-        var alternatives = std.ArrayList(Alternative).init(self.allocator);
+        var alternatives = std.ArrayList(Alternative){};
         
         // Common alternatives database
         if (std.mem.indexOf(u8, package_name, "firefox") != null) {
-            try alternatives.append(.{
+            try alternatives.append(self.allocator, .{
                 .name = try self.allocator.dupe(u8, "firefox-esr"),
                 .description = try self.allocator.dupe(u8, "Extended Support Release version"),
             });
-            try alternatives.append(.{
+            try alternatives.append(self.allocator, .{
                 .name = try self.allocator.dupe(u8, "chromium"),
                 .description = try self.allocator.dupe(u8, "Open-source web browser"),
             });
         } else if (std.mem.indexOf(u8, package_name, "vim") != null) {
-            try alternatives.append(.{
+            try alternatives.append(self.allocator, .{
                 .name = try self.allocator.dupe(u8, "neovim"),
                 .description = try self.allocator.dupe(u8, "Hyperextensible Vim-based text editor"),
             });
-            try alternatives.append(.{
+            try alternatives.append(self.allocator, .{
                 .name = try self.allocator.dupe(u8, "emacs"),
                 .description = try self.allocator.dupe(u8, "The extensible, customizable text editor"),
             });

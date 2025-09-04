@@ -68,14 +68,17 @@ pub const PkgbuildAnalyzer = struct {
         const file = try std.fs.openFileAbsolute(file_path, .{});
         defer file.close();
         
-        const content = try file.readToEndAlloc(self.allocator, 1024 * 1024); // 1MB limit
+        const file_size = try file.getEndPos();
+        if (file_size > 1024 * 1024) return error.FileTooLarge;
+        const content = try self.allocator.alloc(u8, file_size);
+        _ = try file.readAll(content); // 1MB limit
         defer self.allocator.free(content);
         
         return self.analyzeContent(content);
     }
     
     pub fn analyzeContent(self: *PkgbuildAnalyzer, content: []const u8) !SecurityReport {
-        var violations = std.ArrayList(SecurityViolation).init(self.allocator);
+        var violations = std.ArrayList(SecurityViolation){};
         var line_number: u32 = 1;
         var lines = std.mem.tokenizeScalar(u8, content, '\n');
         
@@ -91,12 +94,12 @@ pub const PkgbuildAnalyzer = struct {
                         .line_content = try self.allocator.dupe(u8, line),
                         .context = try self.extractContext(content, line_number),
                     };
-                    try violations.append(violation);
+                    try violations.append(self.allocator, violation);
                 }
             }
         }
         
-        const violations_slice = try violations.toOwnedSlice();
+        const violations_slice = try violations.toOwnedSlice(self.allocator);
         const overall_score = self.calculateOverallScore(violations_slice);
         const risk_level = self.determineRiskLevel(violations_slice, overall_score);
         const summary = try self.generateSummary(violations_slice, overall_score);
@@ -144,7 +147,7 @@ pub const PkgbuildAnalyzer = struct {
     }
     
     pub fn scanForCredentials(self: *PkgbuildAnalyzer, content: []const u8) ![]CredentialPattern {
-        var credentials = std.ArrayList(CredentialPattern).init(self.allocator);
+        var credentials = std.ArrayList(CredentialPattern){};
         
         const credential_patterns = [_]CredentialPattern{
             .{ .pattern = "password=", .type = .password, .severity = .critical },
@@ -158,11 +161,11 @@ pub const PkgbuildAnalyzer = struct {
         
         for (credential_patterns) |pattern| {
             if (std.mem.indexOf(u8, content, pattern.pattern) != null) {
-                try credentials.append(pattern);
+                try credentials.append(self.allocator, pattern);
             }
         }
         
-        return credentials.toOwnedSlice();
+        return credentials.toOwnedSlice(self.allocator);
     }
     
     fn matchesPattern(self: *PkgbuildAnalyzer, line: []const u8, pattern: *const SecurityPattern) bool {
@@ -180,21 +183,21 @@ pub const PkgbuildAnalyzer = struct {
         const context_lines = 2;
         var lines = std.mem.tokenizeScalar(u8, content, '\n');
         var current_line: u32 = 1;
-        var context = std.ArrayList(u8).init(self.allocator);
+        var context = std.ArrayList(u8){};
         
         // Find target line and extract context
         while (lines.next()) |line| {
             defer current_line += 1;
             
             if (current_line >= target_line - context_lines and current_line <= target_line + context_lines) {
-                try context.appendSlice(line);
-                try context.append('\n');
+                try context.appendSlice(self.allocator, line);
+                try context.append(self.allocator, '\n');
             }
             
             if (current_line > target_line + context_lines) break;
         }
         
-        return context.toOwnedSlice();
+        return context.toOwnedSlice(self.allocator);
     }
     
     fn calculateOverallScore(self: *PkgbuildAnalyzer, violations: []SecurityViolation) f32 {
@@ -236,24 +239,24 @@ pub const PkgbuildAnalyzer = struct {
             }
         }
         
-        var summary = std.ArrayList(u8).init(self.allocator);
-        try summary.appendSlice("Security analysis found ");
-        try summary.appendSlice(try std.fmt.allocPrint(self.allocator, "{d}", .{violations.len}));
-        try summary.appendSlice(" potential issues (Score: ");
-        try summary.appendSlice(try std.fmt.allocPrint(self.allocator, "{d:.1}", .{score}));
-        try summary.appendSlice("). ");
+        var summary = std.ArrayList(u8){};
+        try summary.appendSlice(self.allocator, "Security analysis found ");
+        try summary.appendSlice(self.allocator, try std.fmt.allocPrint(self.allocator, "{d}", .{violations.len}));
+        try summary.appendSlice(self.allocator, " potential issues (Score: ");
+        try summary.appendSlice(self.allocator, try std.fmt.allocPrint(self.allocator, "{d:.1}", .{score}));
+        try summary.appendSlice(self.allocator, "). ");
         
         if (critical_count > 0) {
-            try summary.appendSlice(try std.fmt.allocPrint(self.allocator, "{d} critical, ", .{critical_count}));
+            try summary.appendSlice(self.allocator, try std.fmt.allocPrint(self.allocator, "{d} critical, ", .{critical_count}));
         }
         if (danger_count > 0) {
-            try summary.appendSlice(try std.fmt.allocPrint(self.allocator, "{d} dangerous, ", .{danger_count}));
+            try summary.appendSlice(self.allocator, try std.fmt.allocPrint(self.allocator, "{d} dangerous, ", .{danger_count}));
         }
         if (warning_count > 0) {
-            try summary.appendSlice(try std.fmt.allocPrint(self.allocator, "{d} warnings.", .{warning_count}));
+            try summary.appendSlice(self.allocator, try std.fmt.allocPrint(self.allocator, "{d} warnings.", .{warning_count}));
         }
         
-        return summary.toOwnedSlice();
+        return summary.toOwnedSlice(self.allocator);
     }
 };
 

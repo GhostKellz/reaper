@@ -118,7 +118,7 @@ pub const PackageNode = struct {
             .provides = &.{},
             .conflicts = &.{},
             .installed = false,
-            .required_by = std.ArrayList([]const u8).init(allocator),
+            .required_by = std.ArrayList([]const u8){},
             .state = std.atomic.Value(NodeState).init(.unvisited),
             .depth = 0,
             .topological_order = -1,
@@ -157,7 +157,7 @@ pub const PackageNode = struct {
         for (self.required_by.items) |r| {
             allocator.free(r);
         }
-        self.required_by.deinit();
+        self.required_by.deinit(allocator);
         
         allocator.free(self.source_repository);
         allocator.destroy(self);
@@ -194,7 +194,7 @@ pub const DependencyGraph = struct {
     pub fn init(allocator: std.mem.Allocator) DependencyGraph {
         return DependencyGraph{
             .nodes = std.StringHashMap(*PackageNode).init(allocator),
-            .root_packages = std.ArrayList([]const u8).init(allocator),
+            .root_packages = std.ArrayList([]const u8){},
             .allocator = allocator,
         };
     }
@@ -210,7 +210,7 @@ pub const DependencyGraph = struct {
         for (self.root_packages.items) |pkg| {
             self.allocator.free(pkg);
         }
-        self.root_packages.deinit();
+        self.root_packages.deinit(allocator);
     }
     
     pub fn addPackage(self: *DependencyGraph, node: *PackageNode) !void {
@@ -223,12 +223,12 @@ pub const DependencyGraph = struct {
     }
     
     pub fn addRootPackage(self: *DependencyGraph, name: []const u8) !void {
-        try self.root_packages.append(try self.allocator.dupe(u8, name));
+        try self.root_packages.append(self.allocator, try self.allocator.dupe(u8, name));
     }
     
     pub fn detectCycles(self: *const DependencyGraph) ![][]const u8 {
-        var cycles = std.ArrayList([]const u8).init(self.allocator);
-        defer cycles.deinit();
+        var cycles = std.ArrayList([]const u8){};
+        defer cycles.deinit(self.allocator);
         
         var iterator = self.nodes.iterator();
         while (iterator.next()) |entry| {
@@ -240,8 +240,8 @@ pub const DependencyGraph = struct {
         while (iterator.next()) |entry| {
             const node = entry.value_ptr.*;
             if (node.state.load(.acquire) == .unvisited) {
-                var path = std.ArrayList([]const u8).init(self.allocator);
-                defer path.deinit();
+                var path = std.ArrayList([]const u8){};
+                defer path.deinit(self.allocator);
                 
                 try self.dfsVisit(node, &path, &cycles);
             }
@@ -263,14 +263,14 @@ pub const DependencyGraph = struct {
             } else path.items.len;
             
             const cycle = try std.mem.join(self.allocator, " -> ", path.items[cycle_start..]);
-            try cycles.append(cycle);
+            try cycles.append(self.allocator, cycle);
             return;
         }
         
         if (node.state.load(.acquire) == .visited) return;
         
         node.state.store(.visiting, .release);
-        try path.append(node.name);
+        try path.append(self.allocator, node.name);
         
         for (node.dependencies) |dep| {
             if (self.getPackage(dep.name)) |dep_node| {
@@ -283,8 +283,8 @@ pub const DependencyGraph = struct {
     }
     
     pub fn topologicalSort(self: *const DependencyGraph) ![][]const u8 {
-        var sorted = std.ArrayList([]const u8).init(self.allocator);
-        defer sorted.deinit();
+        var sorted = std.ArrayList([]const u8){};
+        defer sorted.deinit(self.allocator);
         
         var in_degree = std.StringHashMap(u32).init(self.allocator);
         defer in_degree.deinit();
@@ -306,27 +306,27 @@ pub const DependencyGraph = struct {
         }
         
         // Find nodes with no incoming edges
-        var queue = std.ArrayList([]const u8).init(self.allocator);
-        defer queue.deinit();
+        var queue = std.ArrayList([]const u8){};
+        defer queue.deinit(self.allocator);
         
         var in_degree_iter = in_degree.iterator();
         while (in_degree_iter.next()) |entry| {
             if (entry.value_ptr.* == 0) {
-                try queue.append(entry.key_ptr.*);
+                try queue.append(self.allocator, entry.key_ptr.*);
             }
         }
         
         // Process queue
         while (queue.items.len > 0) {
             const current = queue.pop();
-            try sorted.append(try self.allocator.dupe(u8, current));
+            try sorted.append(self.allocator, try self.allocator.dupe(u8, current));
             
             if (self.getPackage(current)) |node| {
                 for (node.dependencies) |dep| {
                     if (in_degree.getPtr(dep.name)) |degree| {
                         degree.* -= 1;
                         if (degree.* == 0) {
-                            try queue.append(dep.name);
+                            try queue.append(self.allocator, dep.name);
                         }
                     }
                 }
@@ -467,12 +467,12 @@ pub const AsyncDependencyResolver = struct {
         defer resolving.deinit();
         
         // Queue for packages to resolve
-        var resolve_queue = std.ArrayList([]const u8).init(self.context.allocator);
-        defer resolve_queue.deinit();
+        var resolve_queue = std.ArrayList([]const u8){};
+        defer resolve_queue.deinit(self.context.allocator);
         
         // Add root packages to queue
         for (root_packages) |pkg_name| {
-            try resolve_queue.append(pkg_name);
+            try resolve_queue.append(self.context.allocator, pkg_name);
             try resolving.put(pkg_name, {});
         }
         
@@ -493,7 +493,7 @@ pub const AsyncDependencyResolver = struct {
                         
                         // Add new dependencies to list
                         for (deps) |dep_name| {
-                            try new_deps.append(try resolver.context.allocator.dupe(u8, dep_name));
+                            try new_deps.append(resolver.context.allocator, try resolver.context.allocator.dupe(u8, dep_name));
                         }
                     }
                 }.resolvePackage, .{ self, pkg_name, &resolve_queue }, .{
@@ -552,11 +552,11 @@ pub const AsyncDependencyResolver = struct {
         _ = self.context.resolution_stats.packages_resolved.fetchAdd(1, .acq_rel);
         
         // Extract dependency names
-        var dep_names = std.ArrayList([]const u8).init(self.context.allocator);
-        defer dep_names.deinit();
+        var dep_names = std.ArrayList([]const u8){};
+        defer dep_names.deinit(self.context.allocator);
         
         for (dependencies) |dep| {
-            try dep_names.append(try self.context.allocator.dupe(u8, dep.name));
+            try dep_names.append(self.context.allocator, try self.context.allocator.dupe(u8, dep.name));
         }
         
         return dep_names.toOwnedSlice();
@@ -599,8 +599,8 @@ pub const AsyncDependencyResolver = struct {
     }
     
     fn parseDependencies(self: *AsyncDependencyResolver, info: PackageInfo) ![]Dependency {
-        var dependencies = std.ArrayList(Dependency).init(self.context.allocator);
-        defer dependencies.deinit();
+        var dependencies = std.ArrayList(Dependency){};
+        defer dependencies.deinit(self.context.allocator);
         
         // Parse runtime dependencies
         try self.parseDependencyString(info.dependencies, .runtime, &dependencies);
@@ -623,7 +623,7 @@ pub const AsyncDependencyResolver = struct {
         var iter = std.mem.tokenize(u8, dep_string, " \t\n");
         while (iter.next()) |dep_spec| {
             const dep = try self.parseSingleDependency(dep_spec, dep_type);
-            try dependencies.append(dep);
+            try dependencies.append(self.context.allocator, dep);
         }
     }
     

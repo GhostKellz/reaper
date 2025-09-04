@@ -86,21 +86,21 @@ pub const GpgManager = struct {
     }
     
     pub fn verifySignature(self: *GpgManager, file_path: []const u8, signature_path: []const u8) !GpgVerification {
-        var args = std.ArrayList([]const u8).init(self.allocator);
-        defer args.deinit();
+        var args = std.ArrayList([]const u8){};
+        defer args.deinit(self.allocator);
         
-        try args.append(self.gpg_binary);
-        try args.append("--verify");
-        try args.append("--status-fd");
-        try args.append("1");
+        try args.append(self.allocator, self.gpg_binary);
+        try args.append(self.allocator, "--verify");
+        try args.append(self.allocator, "--status-fd");
+        try args.append(self.allocator, "1");
         
         if (self.gnupg_home) |home| {
-            try args.append("--homedir");
-            try args.append(home);
+            try args.append(self.allocator, "--homedir");
+            try args.append(self.allocator, home);
         }
         
-        try args.append(signature_path);
-        try args.append(file_path);
+        try args.append(self.allocator, signature_path);
+        try args.append(self.allocator, file_path);
         
         const result = try std.process.Child.run(.{
             .allocator = self.allocator,
@@ -163,20 +163,20 @@ pub const GpgManager = struct {
     }
     
     fn tryImportFromKeyserver(self: *GpgManager, key_id: []const u8, keyserver: []const u8) !bool {
-        var args = std.ArrayList([]const u8).init(self.allocator);
-        defer args.deinit();
+        var args = std.ArrayList([]const u8){};
+        defer args.deinit(self.allocator);
         
-        try args.append(self.gpg_binary);
-        try args.append("--keyserver");
-        try args.append(keyserver);
-        try args.append("--recv-keys");
+        try args.append(self.allocator, self.gpg_binary);
+        try args.append(self.allocator, "--keyserver");
+        try args.append(self.allocator, keyserver);
+        try args.append(self.allocator, "--recv-keys");
         
         if (self.gnupg_home) |home| {
-            try args.append("--homedir");
-            try args.append(home);
+            try args.append(self.allocator, "--homedir");
+            try args.append(self.allocator, home);
         }
         
-        try args.append(key_id);
+        try args.append(self.allocator, key_id);
         
         const result = try std.process.Child.run(.{
             .allocator = self.allocator,
@@ -189,20 +189,20 @@ pub const GpgManager = struct {
     }
     
     pub fn getKeyInfo(self: *GpgManager, key_id: []const u8) !?KeyInfo {
-        var args = std.ArrayList([]const u8).init(self.allocator);
-        defer args.deinit();
+        var args = std.ArrayList([]const u8){};
+        defer args.deinit(self.allocator);
         
-        try args.append(self.gpg_binary);
-        try args.append("--list-keys");
-        try args.append("--with-colons");
-        try args.append("--fixed-list-mode");
+        try args.append(self.allocator, self.gpg_binary);
+        try args.append(self.allocator, "--list-keys");
+        try args.append(self.allocator, "--with-colons");
+        try args.append(self.allocator, "--fixed-list-mode");
         
         if (self.gnupg_home) |home| {
-            try args.append("--homedir");
-            try args.append(home);
+            try args.append(self.allocator, "--homedir");
+            try args.append(self.allocator, home);
         }
         
-        try args.append(key_id);
+        try args.append(self.allocator, key_id);
         
         const result = try std.process.Child.run(.{
             .allocator = self.allocator,
@@ -277,18 +277,18 @@ pub const GpgManager = struct {
                 }
                 
                 // Rest is signer name/email
-                var signer_parts = std.ArrayList(u8).init(self.allocator);
-                defer signer_parts.deinit();
+                var signer_parts = std.ArrayList(u8){};
+                defer signer_parts.deinit(self.allocator);
                 
                 while (parts.next()) |part| {
                     if (signer_parts.items.len > 0) {
-                        try signer_parts.append(' ');
+                        try signer_parts.append(self.allocator, ' ');
                     }
-                    try signer_parts.appendSlice(part);
+                    try signer_parts.appendSlice(self.allocator, part);
                 }
                 
                 if (signer_parts.items.len > 0) {
-                    verification.signer_name = try signer_parts.toOwnedSlice();
+                    verification.signer_name = try signer_parts.toOwnedSlice(self.allocator);
                 }
             } else if (std.mem.startsWith(u8, line, "[GNUPG:] TRUST_")) {
                 // Extract trust level
@@ -325,7 +325,7 @@ pub const GpgManager = struct {
     fn parseKeyInfo(self: *GpgManager, output: []const u8) !?KeyInfo {
         var lines = std.mem.tokenizeScalar(u8, output, '\n');
         var key_info: ?KeyInfo = null;
-        var user_ids = std.ArrayList([]const u8).init(self.allocator);
+        var user_ids = std.ArrayList([]const u8){};
         
         while (lines.next()) |line| {
             var fields = std.mem.tokenizeScalar(u8, line, ':');
@@ -360,7 +360,7 @@ pub const GpgManager = struct {
                 _ = fields.next(); // Skip class
                 
                 const user_id = fields.next() orelse continue;
-                try user_ids.append(try self.allocator.dupe(u8, user_id));
+                try user_ids.append(self.allocator, try self.allocator.dupe(u8, user_id));
             }
         }
         
@@ -373,7 +373,7 @@ pub const GpgManager = struct {
         for (user_ids.items) |uid| {
             self.allocator.free(uid);
         }
-        user_ids.deinit();
+        user_ids.deinit(self.allocator);
         
         return null;
     }

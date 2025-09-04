@@ -47,12 +47,12 @@ pub const IsoBuilder = struct {
             .profile = .minimal,
             .kernel_variant = "linux-ghost",
             .include_ghostnv = false,
-            .additional_packages = std.ArrayList([]const u8).init(allocator),
+            .additional_packages = std.ArrayList([]const u8){},
         };
     }
     
     pub fn deinit(self: *IsoBuilder) void {
-        self.additional_packages.deinit();
+        self.additional_packages.deinit(self.allocator);
     }
     
     pub fn setProfile(self: *IsoBuilder, profile: IsoProfile) void {
@@ -68,7 +68,7 @@ pub const IsoBuilder = struct {
     }
     
     pub fn addPackage(self: *IsoBuilder, package: []const u8) !void {
-        try self.additional_packages.append(package);
+        try self.additional_packages.append(self.allocator, package);
     }
     
     pub fn prepareWorkDir(self: *IsoBuilder) !void {
@@ -137,11 +137,11 @@ pub const IsoBuilder = struct {
     pub fn customizePackages(self: *IsoBuilder) !void {
         print("Customizing package list...\n", .{});
         
-        var packages_file = std.ArrayList(u8).init(self.allocator);
-        defer packages_file.deinit();
+        var packages_file = std.ArrayList(u8){};
+        defer packages_file.deinit(self.allocator);
         
         // Base packages
-        try packages_file.appendSlice(
+        try packages_file.appendSlice(self.allocator, 
             \\base
             \\base-devel
             \\linux-firmware
@@ -153,28 +153,28 @@ pub const IsoBuilder = struct {
         );
         
         // Add kernel variant
-        try packages_file.appendSlice(self.kernel_variant);
-        try packages_file.append('\n');
+        try packages_file.appendSlice(self.allocator, self.kernel_variant);
+        try packages_file.append(self.allocator, '\n');
         
         // Add profile packages
         for (self.profile.getPackages()) |pkg| {
-            try packages_file.appendSlice(pkg);
-            try packages_file.append('\n');
+            try packages_file.appendSlice(self.allocator, pkg);
+            try packages_file.append(self.allocator, '\n');
         }
         
         // Add additional packages
         for (self.additional_packages.items) |pkg| {
-            try packages_file.appendSlice(pkg);
-            try packages_file.append('\n');
+            try packages_file.appendSlice(self.allocator, pkg);
+            try packages_file.append(self.allocator, '\n');
         }
         
         // Add Ghost stack if requested
         if (self.include_ghostnv) {
-            try packages_file.appendSlice("ghostnv\n");
+            try packages_file.appendSlice(self.allocator, "ghostnv\n");
         }
         
         // Common useful packages
-        try packages_file.appendSlice(
+        try packages_file.appendSlice(self.allocator, 
             \\btrfs-progs
             \\networkmanager
             \\vim

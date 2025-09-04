@@ -50,8 +50,8 @@ pub const PacmanBackend = struct {
     
     fn search(backend: *Backend, query: []const u8) ![]Package {
         const self = @as(*PacmanBackend, @fieldParentPtr("base", backend));
-        var packages = std.ArrayList(Package).init(backend.allocator);
-        defer packages.deinit();
+        var packages = std.ArrayList(Package){};
+        defer packages.deinit(backend.allocator);
         
         // Use async subprocess if available, otherwise fallback to sync
         const stdout_data = if (self.async_subprocess) |async_proc| blk: {
@@ -59,7 +59,7 @@ pub const PacmanBackend = struct {
             defer exec_result.deinit(backend.allocator);
             
             if (exec_result.exit_code != 0) {
-                return packages.toOwnedSlice();
+                return packages.toOwnedSlice(backend.allocator);
             }
             
             const stdout_copy = try backend.allocator.dupe(u8, exec_result.stdout);
@@ -73,7 +73,7 @@ pub const PacmanBackend = struct {
             
             if (sync_result.term != .Exited or sync_result.term.Exited != 0) {
                 backend.allocator.free(sync_result.stdout);
-                return packages.toOwnedSlice();
+                return packages.toOwnedSlice(backend.allocator);
             }
             
             break :blk sync_result.stdout;
@@ -110,10 +110,10 @@ pub const PacmanBackend = struct {
             pkg.trust_score = 8.0; // High trust for official packages
             pkg.backend = backend;
             
-            try packages.append(pkg);
+            try packages.append(backend.allocator, pkg);
         }
         
-        return packages.toOwnedSlice();
+        return packages.toOwnedSlice(backend.allocator);
     }
     
     fn getInfo(backend: *Backend, package_name: []const u8) !?Package {

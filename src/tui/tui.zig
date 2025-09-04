@@ -37,12 +37,12 @@ pub const TuiState = struct {
     
     pub fn init(allocator: std.mem.Allocator) TuiState {
         return .{
-            .search_query = std.ArrayList(u8).init(allocator),
+            .search_query = std.ArrayList(u8){},
         };
     }
     
     pub fn deinit(self: *TuiState, allocator: std.mem.Allocator) void {
-        self.search_query.deinit();
+        self.search_query.deinit(allocator);
         if (self.search_results.len > 0) {
             allocator.free(self.search_results);
         }
@@ -110,7 +110,7 @@ pub const Tui = struct {
                     't' => try self.showTrustInfo(),
                     else => {
                         if (self.state.active_tab == .search) {
-                            try self.state.search_query.append(c);
+                            try self.state.search_query.append(self.allocator, c);
                         }
                     },
                 },
@@ -432,7 +432,7 @@ pub const Tui = struct {
     
     fn handleSpace(self: *Tui) !void {
         if (self.state.active_tab == .search) {
-            try self.state.search_query.append(' ');
+            try self.state.search_query.append(self.allocator, ' ');
         }
     }
     

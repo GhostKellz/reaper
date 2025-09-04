@@ -349,7 +349,7 @@ pub const ParallelBuilder = struct {
                 4096, // 4GB memory limit
                 10240, // 10GB disk limit
             ),
-            .active_jobs = std.ArrayList(*BuildJob).init(allocator),
+            .active_jobs = std.ArrayList(*BuildJob){},
             .worker_threads = try allocator.alloc(std.Thread, max_workers),
             .shutdown = std.atomic.Value(bool).init(false),
             .stats = BuildStats{
@@ -385,7 +385,7 @@ pub const ParallelBuilder = struct {
         // Cleanup
         self.allocator.free(self.worker_threads);
         self.build_queue.deinit();
-        self.active_jobs.deinit();
+        self.active_jobs.deinit(allocator);
         self.allocator.destroy(self);
     }
 
@@ -411,7 +411,7 @@ pub const ParallelBuilder = struct {
                 // Check if we can allocate resources
                 if (self.resource_manager.allocateResources(job)) {
                     // Add to active jobs
-                    self.active_jobs.append(job) catch continue;
+                    self.active_jobs.append(allocator, job) catch continue;
                     
                     // Execute the build
                     const result = self.executeJob(job) catch |err| BuildResult{
@@ -461,7 +461,7 @@ pub const ParallelBuilder = struct {
                 } else {
                     // Resources not available, re-queue the job
                     self.build_queue.enqueue(job);
-                    std.time.sleep(100 * std.time.ns_per_ms); // Wait 100ms before retrying
+                    std.Thread.sleep(100 * std.time.ns_per_ms); // Wait 100ms before retrying
                 }
             }
         }
@@ -479,11 +479,11 @@ pub const ParallelBuilder = struct {
         
         // Extract build dependencies, sources, etc.
         // This is a simplified parser - real implementation would be more robust
-        var sources = std.ArrayList(BuildJob.SourceFile).init(self.allocator);
-        defer sources.deinit();
+        var sources = std.ArrayList(BuildJob.SourceFile){};
+        defer sources.deinit(self.allocator);
         
-        var dependencies = std.ArrayList([]const u8).init(self.allocator);
-        defer dependencies.deinit();
+        var dependencies = std.ArrayList([]const u8){};
+        defer dependencies.deinit(self.allocator);
         
         // Parse sources
         if (std.mem.indexOf(u8, content, "source=(")) |source_start| {
@@ -500,7 +500,7 @@ pub const ParallelBuilder = struct {
                 
                 if (url.len > 0) {
                     const filename = std.fs.path.basename(url);
-                    try sources.append(.{
+                    try sources.append(self.allocator, .{
                         .url = try self.allocator.dupe(u8, url),
                         .filename = try self.allocator.dupe(u8, filename),
                         .checksum = null,
@@ -528,7 +528,7 @@ pub const ParallelBuilder = struct {
                 const dep = makedep_line[absolute_pos..absolute_pos + dep_end];
                 
                 if (dep.len > 0) {
-                    try dependencies.append(try self.allocator.dupe(u8, dep));
+                    try dependencies.append(self.allocator, try self.allocator.dupe(u8, dep));
                 }
                 
                 dep_start = absolute_pos + dep_end + 1;
@@ -552,8 +552,8 @@ pub const ParallelBuilder = struct {
         try std.fs.makeDirAbsolute(job.work_dir);
         defer std.fs.deleteTreeAbsolute(job.work_dir) catch {};
         
-        var build_log = std.ArrayList(u8).init(self.allocator);
-        defer build_log.deinit();
+        var build_log = std.ArrayList(u8){};
+        defer build_log.deinit(self.allocator);
         
         // Step 1: Download sources
         job.updateProgress(.downloading_sources, 0.1);
@@ -671,16 +671,16 @@ pub const ParallelBuilder = struct {
         defer self.allocator.free(result.stdout);
         defer self.allocator.free(result.stderr);
         
-        try build_log.appendSlice(result.stdout);
-        try build_log.appendSlice(result.stderr);
+        try build_log.appendSlice(self.allocator, result.stdout);
+        try build_log.appendSlice(self.allocator, result.stderr);
         
         if (result.term != .Exited or result.term.Exited != 0) {
             return BuildError.BuildFailed;
         }
         
         // Find generated package files
-        var package_files = std.ArrayList([]const u8).init(self.allocator);
-        defer package_files.deinit();
+        var package_files = std.ArrayList([]const u8){};
+        defer package_files.deinit(self.allocator);
         
         var dir = try std.fs.openDirAbsolute(job.work_dir, .{ .iterate = true });
         defer dir.close();
@@ -689,7 +689,7 @@ pub const ParallelBuilder = struct {
         while (try iterator.next()) |entry| {
             if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".pkg.tar.zst")) {
                 const full_path = try std.fs.path.join(self.allocator, &.{ job.work_dir, entry.name });
-                try package_files.append(full_path);
+                try package_files.append(self.allocator, full_path);
             }
         }
         

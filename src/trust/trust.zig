@@ -96,16 +96,16 @@ pub const TrustEngine = struct {
         var result = TrustResult{
             .trust_score = 5.0, // Base score
             .trust_level = .medium,
-            .violations = std.ArrayList(SecurityViolation).init(self.allocator),
-            .warnings = std.ArrayList([]const u8).init(self.allocator),
-            .recommendations = std.ArrayList([]const u8).init(self.allocator),
+            .violations = std.ArrayList(SecurityViolation){},
+            .warnings = std.ArrayList([]const u8){},
+            .recommendations = std.ArrayList([]const u8){},
         };
         
         // Check if package is blacklisted
         if (self.blacklisted_packages.contains(pkg.name)) {
             result.trust_score = 0.0;
-            try result.violations.append(.known_malware);
-            try result.warnings.append(try self.allocator.dupe(u8, "Package is on malware blacklist"));
+            try result.violations.append(self.allocator, .known_malware);
+            try result.warnings.append(self.allocator, try self.allocator.dupe(u8, "Package is on malware blacklist"));
         }
         
         // Evaluate maintainer trustworthiness
@@ -365,15 +365,15 @@ pub const TrustResult = struct {
     recommendations: std.ArrayList([]const u8),
     
     pub fn deinit(self: *TrustResult, allocator: std.mem.Allocator) void {
-        self.violations.deinit();
+        self.violations.deinit(allocator);
         for (self.warnings.items) |warning| {
             allocator.free(warning);
         }
-        self.warnings.deinit();
+        self.warnings.deinit(allocator);
         for (self.recommendations.items) |rec| {
             allocator.free(rec);
         }
-        self.recommendations.deinit();
+        self.recommendations.deinit(allocator);
     }
     
     pub fn shouldAllowInstallation(self: TrustResult, min_score: f32, allow_untrusted: bool) bool {

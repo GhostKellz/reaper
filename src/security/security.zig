@@ -37,7 +37,7 @@ pub const SecurityManager = struct {
             .gpg_verification = null,
             .pkgbuild_analysis = null,
             .risk_level = .safe,
-            .recommendations = std.ArrayList([]const u8).init(self.allocator),
+            .recommendations = std.ArrayList([]const u8){},
             .is_safe_to_install = true,
         };
         
@@ -66,9 +66,9 @@ pub const SecurityManager = struct {
         } else {
             if (self.enforce_gpg) {
                 assessment.is_safe_to_install = false;
-                try assessment.recommendations.append(try self.allocator.dupe(u8, "❌ GPG signature required but not found or invalid"));
+                try assessment.recommendations.append(self.allocator, try self.allocator.dupe(u8, "❌ GPG signature required but not found or invalid"));
             } else {
-                try assessment.recommendations.append(try self.allocator.dupe(u8, "⚠️  No valid GPG signature found"));
+                try assessment.recommendations.append(self.allocator, try self.allocator.dupe(u8, "⚠️  No valid GPG signature found"));
             }
         }
         
@@ -78,7 +78,7 @@ pub const SecurityManager = struct {
         
         const security_report = self.pkgbuild_analyzer.analyzeFile(pkgbuild_path) catch |err| switch (err) {
             error.FileNotFound => blk: {
-                try assessment.recommendations.append(try self.allocator.dupe(u8, "❌ PKGBUILD file not found"));
+                try assessment.recommendations.append(self.allocator, try self.allocator.dupe(u8, "❌ PKGBUILD file not found"));
                 assessment.is_safe_to_install = false;
                 break :blk analyzer.SecurityReport{
                     .violations = &.{},
@@ -101,7 +101,7 @@ pub const SecurityManager = struct {
                     "🚨 {s}: {s} (line {d})",
                     .{ violation.pattern.name, violation.pattern.description, violation.line_number }
                 );
-                try assessment.recommendations.append(recommendation);
+                try assessment.recommendations.append(self.allocator, recommendation);
                 
                 if (violation.pattern.level == .critical) {
                     assessment.is_safe_to_install = false;
@@ -115,7 +115,7 @@ pub const SecurityManager = struct {
         // 4. Final safety assessment
         if (assessment.overall_score < self.min_trust_score) {
             assessment.is_safe_to_install = false;
-            try assessment.recommendations.append(try std.fmt.allocPrint(
+            try assessment.recommendations.append(self.allocator, try std.fmt.allocPrint(
                 self.allocator,
                 "❌ Trust score {d:.1} below minimum threshold {d:.1}",
                 .{ assessment.overall_score, self.min_trust_score }
@@ -124,14 +124,14 @@ pub const SecurityManager = struct {
         
         // 5. Add positive recommendations for safe packages
         if (assessment.is_safe_to_install and security_report.violations.len == 0) {
-            try assessment.recommendations.append(try self.allocator.dupe(u8, "✅ No security violations detected"));
+            try assessment.recommendations.append(self.allocator, try self.allocator.dupe(u8, "✅ No security violations detected"));
             
             if (gpg_result.is_valid) {
-                try assessment.recommendations.append(try self.allocator.dupe(u8, "✅ Valid GPG signature found"));
+                try assessment.recommendations.append(self.allocator, try self.allocator.dupe(u8, "✅ Valid GPG signature found"));
             }
             
             if (assessment.overall_score >= 8.0) {
-                try assessment.recommendations.append(try self.allocator.dupe(u8, "⭐ High trust score - excellent package"));
+                try assessment.recommendations.append(self.allocator, try self.allocator.dupe(u8, "⭐ High trust score - excellent package"));
             }
         }
         
@@ -144,14 +144,14 @@ pub const SecurityManager = struct {
     }
     
     pub fn getSecurityPrompt(self: *SecurityManager, assessment: *const SecurityAssessment) ![]const u8 {
-        var prompt = std.ArrayList(u8).init(self.allocator);
+        var prompt = std.ArrayList(u8){};
         
-        try prompt.appendSlice("🔍 Security Assessment for ");
-        try prompt.appendSlice(assessment.package_name);
-        try prompt.appendSlice(":\n\n");
+        try prompt.appendSlice(self.allocator, "🔍 Security Assessment for ");
+        try prompt.appendSlice(self.allocator, assessment.package_name);
+        try prompt.appendSlice(self.allocator, ":\n\n");
         
         // Overall score
-        try prompt.appendSlice(try std.fmt.allocPrint(
+        try prompt.appendSlice(self.allocator, try std.fmt.allocPrint(
             self.allocator,
             "Trust Score: {d:.1}/10.0 ",
             .{assessment.overall_score}
@@ -162,8 +162,8 @@ pub const SecurityManager = struct {
             else if (assessment.overall_score >= 4.0) "⚠️  (Fair)"
             else "🚨 (Poor)";
         
-        try prompt.appendSlice(score_badge);
-        try prompt.appendSlice("\n");
+        try prompt.appendSlice(self.allocator, score_badge);
+        try prompt.appendSlice(self.allocator, "\n");
         
         // Risk level
         const risk_emoji = switch (assessment.risk_level) {
@@ -173,7 +173,7 @@ pub const SecurityManager = struct {
             .critical => "🔴",
         };
         
-        try prompt.appendSlice(try std.fmt.allocPrint(
+        try prompt.appendSlice(self.allocator, try std.fmt.allocPrint(
             self.allocator,
             "Risk Level: {s} {s}\n\n",
             .{ risk_emoji, @tagName(assessment.risk_level) }
@@ -182,51 +182,51 @@ pub const SecurityManager = struct {
         // Security details
         if (assessment.gpg_verification) |gpg_ver| {
             if (gpg_ver.is_valid) {
-                try prompt.appendSlice("✅ GPG Signature: Valid");
+                try prompt.appendSlice(self.allocator, "✅ GPG Signature: Valid");
                 if (gpg_ver.signer_name) |signer| {
-                    try prompt.appendSlice(" (");
-                    try prompt.appendSlice(signer);
-                    try prompt.appendSlice(")");
+                    try prompt.appendSlice(self.allocator, " (");
+                    try prompt.appendSlice(self.allocator, signer);
+                    try prompt.appendSlice(self.allocator, ")");
                 }
-                try prompt.appendSlice("\n");
+                try prompt.appendSlice(self.allocator, "\n");
             } else {
-                try prompt.appendSlice("❌ GPG Signature: ");
-                try prompt.appendSlice(gpg_ver.error_message orelse "Invalid or missing");
-                try prompt.appendSlice("\n");
+                try prompt.appendSlice(self.allocator, "❌ GPG Signature: ");
+                try prompt.appendSlice(self.allocator, gpg_ver.error_message orelse "Invalid or missing");
+                try prompt.appendSlice(self.allocator, "\n");
             }
         }
         
         if (assessment.pkgbuild_analysis) |analysis| {
             if (analysis.violations.len > 0) {
-                try prompt.appendSlice(try std.fmt.allocPrint(
+                try prompt.appendSlice(self.allocator, try std.fmt.allocPrint(
                     self.allocator,
                     "🚨 Security Issues: {d} found\n",
                     .{analysis.violations.len}
                 ));
             } else {
-                try prompt.appendSlice("✅ Security Scan: No issues found\n");
+                try prompt.appendSlice(self.allocator, "✅ Security Scan: No issues found\n");
             }
         }
         
         // Recommendations
         if (assessment.recommendations.items.len > 0) {
-            try prompt.appendSlice("\nRecommendations:\n");
+            try prompt.appendSlice(self.allocator, "\nRecommendations:\n");
             for (assessment.recommendations.items) |rec| {
-                try prompt.appendSlice("  ");
-                try prompt.appendSlice(rec);
-                try prompt.appendSlice("\n");
+                try prompt.appendSlice(self.allocator, "  ");
+                try prompt.appendSlice(self.allocator, rec);
+                try prompt.appendSlice(self.allocator, "\n");
             }
         }
         
-        try prompt.appendSlice("\n");
+        try prompt.appendSlice(self.allocator, "\n");
         
         if (assessment.is_safe_to_install) {
-            try prompt.appendSlice("Proceed with installation? [Y/n]: ");
+            try prompt.appendSlice(self.allocator, "Proceed with installation? [Y/n]: ");
         } else {
-            try prompt.appendSlice("⚠️  Installation not recommended. Continue anyway? [y/N]: ");
+            try prompt.appendSlice(self.allocator, "⚠️  Installation not recommended. Continue anyway? [y/N]: ");
         }
         
-        return prompt.toOwnedSlice();
+        return prompt.toOwnedSlice(self.allocator);
     }
     
     fn determineOverallRisk(self: *SecurityManager, score: f32, pkgbuild_risk: analyzer.SecurityLevel, has_gpg: bool) analyzer.SecurityLevel {
@@ -278,6 +278,6 @@ pub const SecurityAssessment = struct {
         for (self.recommendations.items) |rec| {
             allocator.free(rec);
         }
-        self.recommendations.deinit();
+        self.recommendations.deinit(allocator);
     }
 };
