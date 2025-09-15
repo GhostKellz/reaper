@@ -78,7 +78,7 @@ reap profile show dev
 
 #### Developer Profile
 - **Backend order**: tap → aur → flatpak
-- **Auto-install deps**: base-devel, git, zig, nodejs, python
+- **Auto-install deps**: base-devel, git, rust, nodejs, python
 - **Security**: Strict signature verification
 - **Performance**: 8 parallel jobs
 

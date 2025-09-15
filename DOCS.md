@@ -2,9 +2,7 @@
 
 ## Overview
 
-Reaper (`reap`) is a modern, async-first AUR helper and unified package manager written in Zig. Built with Zig 0.15 dev and the zsync async runtime, it provides blazing-fast performance with memory safety. It supports AUR, Flatpak, and tap-based sources, with a focus on security, extensibility, and a clean CLI/TUI experience.
-
-This is the modern Zig implementation. For the original Rust version, see [reaper-rs](https://github.com/GhostKellz/reaper-rs).
+Reaper (`reap`) is a modern, async-first AUR helper and unified package manager written in Rust. It supports AUR, Flatpak, and tap-based sources, with a focus on security, extensibility, and a clean CLI/TUI experience.
 
 ## Installation
 

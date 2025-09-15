@@ -1,0 +1,23 @@
+pub mod analytics;
+pub mod aur;
+pub mod backend;
+pub mod cli;
+pub mod config;
+pub mod core;
+pub mod enhanced_aur;
+pub mod flatpak;
+pub mod gpg;
+pub mod graph;
+pub mod history;
+pub mod hooks;
+pub mod interactive;
+pub mod pacman;
+pub mod profiles;
+pub mod tap;
+pub mod trust;
+pub mod tui;
+pub mod utils;
+
+pub use crate::aur::SearchResult;
+pub use crate::aur::get_deps;
+pub use crate::core::{Source, install_with_priority, unified_search};
