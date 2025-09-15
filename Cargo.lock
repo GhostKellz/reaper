@@ -1342,7 +1342,7 @@ dependencies = [
  "rayon",
  "regex",
  "reqwest",
- "ring 0.16.20",
+ "ring 0.17.14",
  "rustls 0.20.9",
  "rustls-webpki 0.100.3",
  "sct 0.6.1",
