@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/reaper-logo.png" alt="Reaper Logo" width="200">
+</p>
+
 [![Arch Linux](https://img.shields.io/badge/platform-Arch%20Linux-1793d1?logo=arch-linux&logoColor=white)](https://archlinux.org)
 [![Made with Rust](https://img.shields.io/badge/made%20with-Rust-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Status](https://img.shields.io/badge/status-active-success?style=flat-square)](https://github.com/GhostKellz/reaper)
@@ -5,7 +9,7 @@
 ![Built with Clap](https://img.shields.io/badge/built%20with-clap-orange)
 ![License](https://img.shields.io/github/license/GhostKellz/reaper)
 
-# ☠️ Reaper Package Manager
+# ☠️ Reaper Package Manager
 
 ---
 
@@ -104,7 +108,7 @@ reap rollback <pkg>
 ```bash
 # 🔍 Enhanced package operations with trust and ratings
 reap install firefox --diff          # Show PKGBUILD diff before install
-reap trust score firefox             # Check package security score  
+reap trust score firefox             # Check package security score
 reap rate firefox 5 "Great browser!" # Rate with stars and comment
 
 # 👤 Profile management for different workflows
@@ -117,7 +121,7 @@ reap aur fetch yay                    # Get PKGBUILD for analysis
 reap aur edit custom-package          # Interactive PKGBUILD editing
 reap aur deps firefox --conflicts     # Advanced dependency checking
 
-# 📋 Interactive TUI with live monitoring  
+# 📋 Interactive TUI with live monitoring
 reap tui                              # Launch enhanced TUI
 # Hotkeys: t=trust, r=rate, d=diff, p=profile, TAB=details
 
@@ -282,7 +286,7 @@ See [Full Docs](DOCS.md#configuration) for advanced configuration and Lua config
 - **[Interactive Features](docs/interactive.md)** - Rating system and prompts
 - **[TUI Guide](docs/tui.md)** - Enhanced terminal user interface
 
-### Developer Documentation  
+### Developer Documentation
 - **[API Reference](API.md)** - Complete API documentation
 - **[Architecture](ARCHITECTURE.md)** - System design and structure
 - **[Contributing](CONTRIBUTING.md)** - Development and contribution guide
@@ -347,7 +351,7 @@ Checks performed:
 
 ## 🆕 v0.6.0 New Features
 
-### ⚡ High-Performance Operations  
+### ⚡ High-Performance Operations
 - **Parallel downloads**: Multi-threaded PKGBUILD fetching and search operations
 - **Smart caching**: TTL-based cache with automatic warming for popular packages
 - **Batch operations**: Install/upgrade multiple packages simultaneously
@@ -402,7 +406,7 @@ reap trust score firefox    # Show trust analysis
 reap trust scan             # Scan all installed packages
 ```
 
-### ⭐ Community Rating System  
+### ⭐ Community Rating System
 - **AUR integration**: Real community votes and popularity scores
 - **Star ratings**: Rate packages 1-5 stars with comments
 - **Visual display**: ⭐⭐⭐⭐⭐ ratings in TUI and CLI
@@ -436,4 +440,3 @@ reap profile list
 - **Trust + rating display**: Combined security and community scores
 - **Package details panel**: Full package information with reviews
 - **Interactive hotkeys**: `t` trust, `r` rate, `d` diff, `p` profile
-
