@@ -19,7 +19,7 @@ serde_json = "1.0"
 toml = "0.8"
 toml_edit = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
-ring = "=0.16.20"
+ring = "=0.17.14"
 rustls = "0.20"
 rustls-webpki = "0.100"
 sct = "0.6"
