@@ -21,3 +21,8 @@ Thumbs.db
 # Build artifacts
 *.exe
 *.pdb
+CLAUDE.md
+TODO.md 
+ROADMAP.md 
+CODEX.md 
+archive/
