@@ -1,5 +1,5 @@
 # Rust
-/target/
+target/
 Cargo.lock
 
 # OS
@@ -27,3 +27,4 @@ ROADMAP.md
 CODEX.md 
 archive/
 references/
+tasks/

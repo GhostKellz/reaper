@@ -19,6 +19,7 @@ pub fn cache_search_result(query: &str, results: &[SearchResult]) {
 }
 
 #[cfg(feature = "cache")]
+#[allow(dead_code)]
 pub async fn async_get_pkgbuild_cached(pkg: &str) -> String {
     // Try to load from file cache first
     if let Some(cached) = cache::load_pkgbuild(pkg) {
@@ -162,8 +163,7 @@ pub fn resolve_deps(pkgb: &str) -> PkgMeta {
 // --- CLI stub functions for compatibility ---
 #[allow(dead_code)]
 pub fn pkgb_diff_audit(package: &str, pkgb: &str) {
-    let backup_path =
-        std::path::PathBuf::from(format!("/var/lib/reaper/backup/{}_PKGBUILD.bak", package));
+    let backup_path = crate::paths::backup_dir().join(format!("{}_PKGBUILD.bak", package));
     if let Ok(old_pkgb) = fs::read_to_string(&backup_path) {
         for diff in lines(&old_pkgb, pkgb) {
             match diff {
@@ -180,8 +180,7 @@ pub fn pkgb_diff_audit(package: &str, pkgb: &str) {
 #[cfg(feature = "cache")]
 #[allow(dead_code)]
 pub fn compare_pkgbuilds(pkg: &str, new_pkgb: &str) {
-    let backup_path =
-        std::path::PathBuf::from(format!("/var/lib/reaper/backups/{}/PKGBUILD.bak", pkg));
+    let backup_path = crate::paths::backup_dir().join(pkg).join("PKGBUILD.bak");
     if let Ok(old_pkgb) = fs::read_to_string(&backup_path) {
         println!("[reap][diff] Diff for {}:", pkg);
         for diff in lines(&old_pkgb, new_pkgb) {
@@ -200,18 +199,24 @@ pub fn compare_pkgbuilds(pkg: &str, new_pkgb: &str) {
 }
 
 pub fn completion(shell: &str) {
+    // Shell completion is not yet fully implemented.
+    // This stub acknowledges the request but doesn't provide working completions.
+    println!("[reap] Shell completion for '{}' is not yet implemented.", shell);
+    println!();
+    println!("For now, you can use basic command completion by adding to your shell config:");
+    println!();
     match shell {
-        "bash" => println!("complete -C reap reap"),
-        "zsh" => println!("compdef _reap reap"),
-        "fish" => println!("complete -c reap -a \"(reap --completion)\""),
-        _ => println!("[reap] Shell completion not implemented for {}.", shell),
+        "bash" => println!("  # Add to ~/.bashrc - provides basic command completion"),
+        "zsh" => println!("  # Add to ~/.zshrc - provides basic command completion"),
+        "fish" => println!("  # Add to ~/.config/fish/config.fish"),
+        _ => {}
     }
+    println!();
+    println!("Full completion support is planned for a future release.");
 }
 
 pub fn cli_set_keyserver(keyserver: &str) {
-    let config_path = dirs::home_dir()
-        .unwrap_or_default()
-        .join(".config/reaper/brew.lua");
+    let config_path = crate::paths::brew_lua();
     if let Ok(mut script) = fs::read_to_string(&config_path) {
         if script.contains("keyserver = ") {
             script = script.replace(
@@ -255,9 +260,7 @@ pub async fn check_keyserver_async(keyserver: &str) {
 pub fn pin_package(pkg: &str) -> Result<(), String> {
     use std::fs::OpenOptions;
     use std::io::Write;
-    let config_path = dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
-        .join(".config/reap/pinned.toml");
+    let config_path = crate::paths::pinned_file();
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
@@ -268,14 +271,12 @@ pub fn pin_package(pkg: &str) -> Result<(), String> {
 }
 
 pub fn is_pinned(pkg: &str) -> bool {
-    let config_path = dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
-        .join(".config/reap/pinned.toml");
+    let config_path = crate::paths::pinned_file();
     if let Ok(contents) = fs::read_to_string(&config_path) {
-        if let Ok(toml) = contents.parse::<Value>() {
-            if let Some(table) = toml.as_table() {
-                return table.contains_key(pkg);
-            }
+        if let Ok(toml) = contents.parse::<Value>()
+            && let Some(table) = toml.as_table()
+        {
+            return table.contains_key(pkg);
         }
         // Fallback: check for simple line pin
         contents.lines().any(|line| line.trim() == pkg)
@@ -287,17 +288,13 @@ pub fn is_pinned(pkg: &str) -> bool {
 #[cfg(feature = "cache")]
 #[allow(dead_code)]
 pub fn pinned_version(pkg: &str) -> Option<String> {
-    let config_path = dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
-        .join(".config/reap/pinned.toml");
-    if let Ok(contents) = fs::read_to_string(&config_path) {
-        if let Ok(toml) = contents.parse::<Value>() {
-            if let Some(table) = toml.as_table() {
-                if let Some(Value::String(ver)) = table.get(pkg) {
-                    return Some(ver.clone());
-                }
-            }
-        }
+    let config_path = crate::paths::pinned_file();
+    if let Ok(contents) = fs::read_to_string(&config_path)
+        && let Ok(toml) = contents.parse::<Value>()
+        && let Some(table) = toml.as_table()
+        && let Some(Value::String(ver)) = table.get(pkg)
+    {
+        return Some(ver.clone());
     }
     None
 }
@@ -310,17 +307,15 @@ pub fn clean_cache() -> Result<String, String> {
         cache::expire_cache();
     }
 
-    let home = dirs::home_dir().unwrap_or_default();
     let cache_dirs = vec![
-        "/tmp/reap".to_string(),
-        format!("{}/.cache/reap", home.display()),
+        std::path::PathBuf::from("/tmp/reap"),
+        crate::paths::CACHE_DIR.clone(),
     ];
     let mut deleted = 0;
-    for dir in &cache_dirs {
-        let path = std::path::PathBuf::from(dir);
+    for path in &cache_dirs {
         if path.exists() && path.is_dir() {
-            for entry in
-                fs::read_dir(&path).map_err(|e| format!("Failed to read {}: {}", dir, e))?
+            for entry in fs::read_dir(path)
+                .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?
             {
                 let entry = entry.map_err(|e| format!("Read dir error: {}", e))?;
                 let p = entry.path();
@@ -347,23 +342,22 @@ pub fn doctor_report() -> Result<String, String> {
     if let Ok(entries) = fs::read_dir("/usr/bin") {
         for entry in entries.flatten() {
             let path = entry.path();
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name.starts_with("reap-") && path.is_symlink() {
-                    if let Ok(target) = fs::read_link(&path) {
-                        if !target.exists() {
-                            issues.push(format!(
-                                "Broken symlink: {} -> {}",
-                                path.display(),
-                                target.display()
-                            ));
-                        }
-                    }
-                }
+            if let Some(name) = path.file_name().and_then(|n| n.to_str())
+                && name.starts_with("reap-")
+                && path.is_symlink()
+                && let Ok(target) = fs::read_link(&path)
+                && !target.exists()
+            {
+                issues.push(format!(
+                    "Broken symlink: {} -> {}",
+                    path.display(),
+                    target.display()
+                ));
             }
         }
     }
     // Check for missing config files
-    let config_dir = dirs::home_dir().unwrap_or_default().join(".config/reap");
+    let config_dir = crate::paths::CONFIG_DIR.clone();
     if !config_dir.exists() {
         issues.push(format!("Missing config dir: {}", config_dir.display()));
     }
@@ -397,11 +391,15 @@ pub fn build_pkg(pkgdir: &std::path::Path, edit: bool) -> Result<(), String> {
             return Err("[reap] Failed to launch editor".to_string());
         }
     }
-    let output = Command::new("makepkg")
-        .arg("-si")
-        .arg("--noconfirm")
-        .current_dir(pkgdir)
-        .output();
+    // Use makepkg_flags from config instead of hardcoded values
+    let config = crate::config::Config::load();
+    let mut cmd = Command::new("makepkg");
+    for flag in &config.build.makepkg_flags {
+        cmd.arg(flag);
+    }
+    cmd.arg("-i"); // Always add install flag
+
+    let output = cmd.current_dir(pkgdir).output();
     match output {
         Ok(out) => {
             if out.status.success() {
@@ -424,9 +422,8 @@ pub fn build_pkg(pkgdir: &std::path::Path, edit: bool) -> Result<(), String> {
 
 pub fn backup_config() -> Result<(), String> {
     use std::fs;
-    use std::path::PathBuf;
-    let config_dir = dirs::home_dir().unwrap_or_default().join(".config/reap");
-    let backup_dir = PathBuf::from("/var/lib/reaper/backups/config");
+    let config_dir = crate::paths::CONFIG_DIR.clone();
+    let backup_dir = crate::paths::backup_dir().join("config");
     if !config_dir.exists() {
         return Err(format!(
             "[reap] Config dir not found: {}",
@@ -456,17 +453,9 @@ pub mod cache {
     use std::path::PathBuf;
     use std::time::{Duration, SystemTime};
 
-    pub static PKGBUILD_CACHE_DIR: Lazy<PathBuf> = Lazy::new(|| {
-        dirs::cache_dir()
-            .unwrap_or_else(|| PathBuf::from("/tmp"))
-            .join("reap/pkgbuilds")
-    });
+    pub static PKGBUILD_CACHE_DIR: Lazy<PathBuf> = Lazy::new(crate::paths::pkgbuild_cache_dir);
 
-    pub static SEARCH_CACHE_DIR: Lazy<PathBuf> = Lazy::new(|| {
-        dirs::cache_dir()
-            .unwrap_or_else(|| PathBuf::from("/tmp"))
-            .join("reap/search")
-    });
+    pub static SEARCH_CACHE_DIR: Lazy<PathBuf> = Lazy::new(crate::paths::search_cache_dir);
 
     pub fn save_pkgbuild(pkg: &str, content: &str) {
         let path = PKGBUILD_CACHE_DIR.join(format!("{}.PKGBUILD", pkg));
@@ -476,16 +465,14 @@ pub mod cache {
 
     pub fn load_pkgbuild(pkg: &str) -> Option<String> {
         let path = PKGBUILD_CACHE_DIR.join(format!("{}.PKGBUILD", pkg));
-        if let Ok(meta) = fs::metadata(&path) {
-            if let Ok(modified) = meta.modified() {
-                if SystemTime::now()
-                    .duration_since(modified)
-                    .unwrap_or(Duration::from_secs(0))
-                    < Duration::from_secs(60 * 60 * 24)
-                {
-                    return fs::read_to_string(&path).ok();
-                }
-            }
+        if let Ok(meta) = fs::metadata(&path)
+            && let Ok(modified) = meta.modified()
+            && SystemTime::now()
+                .duration_since(modified)
+                .unwrap_or(Duration::from_secs(0))
+                < Duration::from_secs(60 * 60 * 24)
+        {
+            return fs::read_to_string(&path).ok();
         }
         None
     }
@@ -503,18 +490,15 @@ pub mod cache {
 
     pub fn load_search(query: &str) -> Option<Vec<SearchResult>> {
         let path = SEARCH_CACHE_DIR.join(format!("{}.json", query));
-        if let Ok(meta) = fs::metadata(&path) {
-            if let Ok(modified) = meta.modified() {
-                if SystemTime::now()
-                    .duration_since(modified)
-                    .unwrap_or(Duration::from_secs(0))
-                    < Duration::from_secs(60 * 60 * 24)
-                {
-                    if let Ok(data) = fs::read_to_string(&path) {
-                        return serde_json::from_str(&data).ok();
-                    }
-                }
-            }
+        if let Ok(meta) = fs::metadata(&path)
+            && let Ok(modified) = meta.modified()
+            && SystemTime::now()
+                .duration_since(modified)
+                .unwrap_or(Duration::from_secs(0))
+                < Duration::from_secs(60 * 60 * 24)
+            && let Ok(data) = fs::read_to_string(&path)
+        {
+            return serde_json::from_str(&data).ok();
         }
         None
     }
@@ -656,22 +640,54 @@ pub fn audit_pkgbuild(pkgbuild: &str) -> (Vec<String>, i32) {
     (warnings, risk_score)
 }
 
+#[allow(dead_code)] // Retained for future use
 pub fn rollback(pkg: &str) {
     use std::fs;
-    use std::path::PathBuf;
-    let backup_dir = PathBuf::from(format!("/var/lib/reaper/backups/{}/", pkg));
-    let pkgbuild_bak = backup_dir.join("PKGBUILD.bak");
-    let pkgbuild = backup_dir.join("PKGBUILD");
-    if pkgbuild_bak.exists() {
-        if let Err(e) = fs::copy(&pkgbuild_bak, &pkgbuild) {
-            eprintln!("[reap][rollback] Failed to restore PKGBUILD: {}", e);
-        } else {
-            println!("[reap][rollback] Restored PKGBUILD for {}.", pkg);
+
+    // Use correct XDG-compliant backup path
+    let backup_dir = crate::paths::backup_dir().join(pkg);
+
+    // Find latest backup timestamp directory
+    let entries: Vec<_> = fs::read_dir(&backup_dir)
+        .ok()
+        .map(|rd| rd.filter_map(|e| e.ok()).collect())
+        .unwrap_or_default();
+
+    let latest = entries
+        .iter()
+        .filter(|e| e.path().is_dir())
+        .max_by_key(|e| e.file_name());
+
+    match latest {
+        Some(backup) => {
+            println!(
+                "[reap][rollback] Found backup at {}",
+                backup.path().display()
+            );
+            // Check for PKGBUILD backup
+            let pkgbuild_bak = backup.path().join("PKGBUILD");
+            if pkgbuild_bak.exists() {
+                println!("[reap][rollback] PKGBUILD backup available for rebuild");
+            }
+            // Check for binary backup
+            let bin_backup = backup.path().join(pkg);
+            if bin_backup.exists() {
+                println!(
+                    "[reap][rollback] Binary backup available at {}",
+                    bin_backup.display()
+                );
+            }
         }
-    } else {
-        eprintln!("[reap][rollback] No PKGBUILD backup found for {}.", pkg);
+        None => {
+            eprintln!(
+                "[reap][rollback] No backup found for {} in {}",
+                pkg,
+                backup_dir.display()
+            );
+        }
     }
-    // Optionally clean up failed build dirs
+
+    // Clean up temp build directory
     let tmp_dir = std::env::temp_dir().join(format!("reap-aur-{}", pkg));
     if tmp_dir.exists() {
         let _ = fs::remove_dir_all(&tmp_dir);

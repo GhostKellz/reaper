@@ -2,12 +2,14 @@
   <img src="assets/reaper-logo.png" alt="Reaper Logo" width="200">
 </p>
 
-[![Arch Linux](https://img.shields.io/badge/platform-Arch%20Linux-1793d1?logo=arch-linux&logoColor=white)](https://archlinux.org)
-[![Made with Rust](https://img.shields.io/badge/made%20with-Rust-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Status](https://img.shields.io/badge/status-active-success?style=flat-square)](https://github.com/GhostKellz/reaper)
-[![Build](https://img.shields.io/github/actions/workflow/status/GhostKellz/reaper/main.yml?branch=main)](https://github.com/GhostKellz/reaper/actions)
-![Built with Clap](https://img.shields.io/badge/built%20with-clap-orange)
-![License](https://img.shields.io/github/license/GhostKellz/reaper)
+<p align="center">
+  <img src="https://img.shields.io/badge/Arch_Linux-1793D1?style=for-the-badge&logo=arch-linux&logoColor=white" alt="Arch Linux">
+  <img src="https://img.shields.io/badge/Rust-B7410E?style=for-the-badge&logo=rust&logoColor=white" alt="Rust">
+  <img src="https://img.shields.io/badge/Clap-E64A19?style=for-the-badge&logo=rust&logoColor=white" alt="Clap">
+  <img src="https://img.shields.io/badge/Tokio-463370?style=for-the-badge&logo=rust&logoColor=white" alt="Tokio">
+  <img src="https://img.shields.io/badge/Ratatui-00CED1?style=for-the-badge&logo=gnome-terminal&logoColor=white" alt="Ratatui">
+  <img src="https://img.shields.io/badge/License-MIT-2ea44f?style=for-the-badge" alt="MIT License">
+</p>
 
 # ☠️ Reaper Package Manager
 
@@ -272,30 +274,32 @@ echo "[HOOK] Installing $REAP_PKG from $REAP_SOURCE"
 
 ## 📂 Config Example
 
-See [Full Docs](DOCS.md#configuration) for advanced configuration and Lua config examples.
+See [Configuration Guide](docs/usage/configuration.md) for advanced configuration.
 
 ---
 
 ## 📚 Documentation
 
+### Getting Started
+- **[Quick Start](docs/getting-started/quickstart.md)** - Get up and running
+- **[Installation](docs/getting-started/installation.md)** - Build and install
+
 ### User Documentation
-- **[Features Guide](FEATURES.md)** - Comprehensive feature overview
-- **[Security Guide](SECURITY.md)** - Security features and best practices
-- **[Profile Management](docs/profiles.md)** - Multi-profile system guide
-- **[Trust System](docs/trust.md)** - Package trust and security analysis
-- **[Interactive Features](docs/interactive.md)** - Rating system and prompts
-- **[TUI Guide](docs/tui.md)** - Enhanced terminal user interface
+- **[Commands](docs/usage/commands.md)** - CLI command reference
+- **[Configuration](docs/usage/configuration.md)** - Configuration options
+- **[Profiles](docs/usage/profiles.md)** - Multi-profile management
+- **[Tap Publishing](docs/usage/tap-publishing.md)** - Publishing tap packages
+
+### Security
+- **[Security Guide](SECURITY.md)** - Security overview
+- **[Trust Model](docs/security/trust-model.md)** - Advisory trust system
+- **[GPG Verification](docs/security/gpg-verification.md)** - Signature verification
 
 ### Developer Documentation
-- **[API Reference](API.md)** - Complete API documentation
-- **[Architecture](ARCHITECTURE.md)** - System design and structure
-- **[Contributing](CONTRIBUTING.md)** - Development and contribution guide
-- **[Roadmap](ROADMAP.md)** - Future development plans
-
-### Quick References
-- **[CLI Commands](docs/cli.md)** - Command-line reference
-- **[Configuration](docs/config.md)** - Configuration options
-- **[Troubleshooting](docs/troubleshooting.md)** - Common issues and solutions
+- **[API Reference](docs/development/api.md)** - API documentation
+- **[Architecture](docs/development/architecture.md)** - System design
+- **[Development Guide](docs/development/dev-guide.md)** - Development tips
+- **[Contributing](CONTRIBUTING.md)** - Contribution guide
 
 ---
 
@@ -349,94 +353,29 @@ Checks performed:
 
 ---
 
-## 🆕 v0.6.0 New Features
+## Key Features
 
-### ⚡ High-Performance Operations
-- **Parallel downloads**: Multi-threaded PKGBUILD fetching and search operations
-- **Smart caching**: TTL-based cache with automatic warming for popular packages
-- **Batch operations**: Install/upgrade multiple packages simultaneously
-```bash
-reap batch-install firefox discord spotify --parallel
-reap parallel-upgrade firefox chromium
-reap perf warm-cache                # Preload popular packages
-reap perf parallel-search "browser" "editor" "media"
-```
+### Performance
+- **Parallel operations**: Multi-threaded PKGBUILD fetching and search
+- **Smart caching**: TTL-based cache for AUR queries
+- **Native Rust**: No yay/paru fallback, all logic is async Rust
 
-### 🛡️ Advanced Security Analysis
-- **Enhanced PKGBUILD scanning**: 38 security patterns, risk scoring (0-100)
-- **Suspicious domain detection**: URL shorteners, paste sites, temp hosts
-- **Credential pattern detection**: Hardcoded passwords, API keys, tokens
-- **Security risk scoring**: LOW/MEDIUM/HIGH/CRITICAL classifications
-```bash
-reap security audit firefox        # Detailed security analysis
-reap security scan-all             # Scan all installed packages
-reap security stats                # Show security statistics
-```
+### Security
+- **Trust scoring**: Advisory-only security scores (0-10)
+- **GPG verification**: Signature verification for tap packages
+- **PKGBUILD analysis**: Pattern detection for suspicious content
 
-### 🚀 Performance & Caching Commands
-- **Cache management**: Statistics, warming, and intelligent cleanup
-- **Parallel operations**: Concurrent downloads and processing
-- **Performance monitoring**: Operation timing and optimization
-```bash
-reap perf cache-stats              # Show cache statistics
-reap perf parallel-fetch yay firefox discord  # Parallel PKGBUILD fetch
-reap perf clear-cache              # Smart cache cleanup
-```
+### AUR Operations
+- **Dependency resolution**: Handles providers, conflicts, circular deps
+- **PKGBUILD management**: Fetch, view diff, edit before install
+- **Devel packages**: Automatic -git package update detection
 
-### 🔧 Enhanced Batch Operations
-- **Multi-package installs**: Handle dependencies and conflicts intelligently
-- **Priority-based processing**: Critical packages first, with smart ordering
-- **Progress tracking**: Real-time status for batch operations
-```bash
-reap batch-install pkg1 pkg2 pkg3  # Sequential with backups
-reap batch-install pkg1 pkg2 --parallel  # Parallel processing
-```
+### Profiles
+- **Multi-profile**: Switch between dev/gaming/minimal configurations
+- **Custom settings**: Backend order, parallel jobs, security levels
 
-### 📊 System Integration
-- **Intelligent backup system**: Pre-install state snapshots with rollback
-- **Advanced conflict detection**: File ownership and dependency analysis
-- **Performance analytics**: Build time tracking and optimization hints
+### TUI
+- **Interactive interface**: Search, queue, logs, profiles, system tabs
+- **Live monitoring**: Real-time build progress
 
-### 🛡️ Trust & Security Engine
-- **Real-time trust scoring**: Every package gets a security score (0-10) with trust badges
-- **Security analysis**: PKGBUILD scanning, signature verification, publisher checks
-- **Trust badges**: 🛡️ TRUSTED, ✅ VERIFIED, ⚠️ CAUTION, ❌ UNSAFE
-```bash
-reap trust score firefox    # Show trust analysis
-reap trust scan             # Scan all installed packages
-```
-
-### ⭐ Community Rating System
-- **AUR integration**: Real community votes and popularity scores
-- **Star ratings**: Rate packages 1-5 stars with comments
-- **Visual display**: ⭐⭐⭐⭐⭐ ratings in TUI and CLI
-```bash
-reap rate firefox 5 "Excellent browser!"
-reap rate vim 4
-```
-
-### 🔧 Advanced AUR Operations
-- **PKGBUILD fetching**: Manual retrieval and parsing
-- **Interactive editing**: Safe PKGBUILD modification with confirmations
-- **Conflict detection**: Advanced dependency analysis and circular detection
-```bash
-reap aur fetch firefox          # Get and analyze PKGBUILD
-reap aur edit firefox           # Interactive editing
-reap aur deps firefox --conflicts # Check for conflicts
-```
-
-### 👤 Multi-Profile Management
-- **Profile switching**: Developer, gaming, minimal presets
-- **Custom settings**: Backend order, security levels, parallel jobs
-```bash
-reap profile create dev --template developer
-reap profile switch gaming
-reap profile list
-```
-
-### 📋 Enhanced Interactive TUI
-- **5 comprehensive tabs**: Search, Queue, Log, Profiles, System
-- **Live monitoring**: Real-time build progress and system stats
-- **Trust + rating display**: Combined security and community scores
-- **Package details panel**: Full package information with reviews
-- **Interactive hotkeys**: `t` trust, `r` rate, `d` diff, `p` profile
+See [CHANGELOG.md](CHANGELOG.md) for version history.

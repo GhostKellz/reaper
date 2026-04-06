@@ -45,11 +45,27 @@ pub struct AurInfo {
 ///
 /// Returns an error if the request to the AUR fails or if the package is not found.
 pub fn fetch_package_info(pkg: &str) -> Result<AurInfo, Box<dyn Error + Send + Sync>> {
+    // Check in-memory cache first
+    if let Some(cached) = crate::aur_cache::get_info(pkg) {
+        return Ok(AurInfo {
+            version: cached.version,
+        });
+    }
+
     let url = format!("https://aur.archlinux.org/rpc/?v=5&type=info&arg[]={}", pkg);
     let client = BlockingClient::new();
     let resp = client.get(&url).send()?;
     let aur_resp: AurResponse = resp.json()?;
     if let Some(r) = aur_resp.results.into_iter().next() {
+        // Cache the result
+        crate::aur_cache::put_info(
+            pkg,
+            AurResult {
+                name: pkg.to_string(),
+                version: r.version.clone(),
+                description: r.description,
+            },
+        );
         Ok(AurInfo { version: r.version })
     } else {
         Err("Package not found".into())
@@ -62,10 +78,19 @@ pub fn fetch_package_info(pkg: &str) -> Result<AurInfo, Box<dyn Error + Send + S
 ///
 /// Returns an error if the request to the AUR fails.
 pub async fn search(query: &str) -> Result<Vec<SearchResult>, Box<dyn Error + Send + Sync>> {
-    #[cfg(feature = "cache")]
-    if let Some(cached) = crate::utils::get_cached_search(query) {
+    // Check in-memory cache first (fastest)
+    if let Some(cached) = crate::aur_cache::get_search(query) {
         return Ok(cached);
     }
+
+    // Check file cache (still faster than network)
+    #[cfg(feature = "cache")]
+    if let Some(cached) = crate::utils::get_cached_search(query) {
+        // Promote to in-memory cache
+        crate::aur_cache::put_search(query, cached.clone());
+        return Ok(cached);
+    }
+
     let url = format!(
         "https://aur.archlinux.org/rpc/?v=5&type=search&arg={}",
         query
@@ -83,31 +108,61 @@ pub async fn search(query: &str) -> Result<Vec<SearchResult>, Box<dyn Error + Se
             source: crate::core::Source::Aur,
         })
         .collect();
+
+    // Cache in both layers
+    crate::aur_cache::put_search(query, results.clone());
     #[cfg(feature = "cache")]
     crate::utils::cache_search_result(query, &results);
+
     Ok(results)
 }
 
 /// Get AUR search results (blocking)
 pub fn aur_search_results(query: &str) -> Vec<AurResult> {
+    // Check in-memory cache first (convert SearchResult back to AurResult)
+    if let Some(cached) = crate::aur_cache::get_search(query) {
+        return cached
+            .into_iter()
+            .map(|r| AurResult {
+                name: r.name,
+                version: r.version,
+                description: Some(r.description),
+            })
+            .collect();
+    }
+
     let url = format!(
         "https://aur.archlinux.org/rpc/?v=5&type=search&arg={}",
         query
     );
-    if let Ok(resp) = reqwest::blocking::get(&url) {
-        if let Ok(json) = resp.json::<AurResponse>() {
-            return json.results;
-        }
+    if let Ok(resp) = reqwest::blocking::get(&url)
+        && let Ok(json) = resp.json::<AurResponse>()
+    {
+        // Cache the results
+        let search_results: Vec<SearchResult> = json
+            .results
+            .iter()
+            .map(|r| SearchResult {
+                name: r.name.clone(),
+                version: r.version.clone(),
+                description: r.description.clone().unwrap_or_default(),
+                source: crate::core::Source::Aur,
+            })
+            .collect();
+        crate::aur_cache::put_search(query, search_results);
+        return json.results;
     }
     vec![]
 }
 
 #[cfg(feature = "cache")]
+#[allow(dead_code)]
 pub async fn get_pkgbuild_cached(pkg: &str) -> String {
     crate::utils::async_get_pkgbuild_cached(pkg).await
 }
 
 #[cfg(not(feature = "cache"))]
+#[allow(dead_code)]
 pub async fn get_pkgbuild_cached(pkg: &str) -> String {
     let url = format!(
         "https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h={}",
@@ -119,92 +174,69 @@ pub async fn get_pkgbuild_cached(pkg: &str) -> String {
     }
 }
 
-/// Install packages using yay or pacman
+/// Install packages using native AUR logic (no yay/paru fallback)
 ///
 /// # Errors
 ///
 /// Returns an error if the installation fails.
-// Refactor async/parallel flows to use owned values or Arc<T> in tokio::spawn
-// For install(), clone bin and pkg for each task, no references moved into async
-// Add explicit return types for async blocks using ?
 pub async fn install(pkgs: Vec<&str>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let yay = which::which("yay").is_ok();
-    let bin = if yay { "yay" } else { "pacman" };
-    println!("[reap] Installing packages: {:?} ({} -S)...", pkgs, bin);
-    let mut tasks: Vec<tokio::task::JoinHandle<Result<(String, bool), anyhow::Error>>> = Vec::new();
-    for &package in &pkgs {
-        let bin = bin.to_string();
-        let pkg = package.to_string();
-        tasks.push(tokio::spawn(async move {
-            let pkgb = get_pkgbuild_cached(&pkg).await;
-            let deps = get_deps(&pkgb);
-            if !deps.is_empty() {
-                eprintln!("[reap] Dependencies for {}: {:?}", pkg.yellow(), deps);
-                for dep in &deps {
-                    if !crate::pacman::is_installed(dep) {
-                        println!("[reap] Installing missing dependency: {}", dep.yellow());
-                        let status = std::process::Command::new(&bin)
-                            .arg("-S")
-                            .arg(dep)
-                            .status()?;
-                        if status.success() {
-                            println!("[reap] Installed dependency: {}", dep.green());
-                        } else {
-                            eprintln!("[reap] Failed to install dependency: {}", dep.red());
-                        }
-                    } else {
-                        println!("[reap] Dependency already installed: {}", dep.green());
-                    }
-                }
-            } else {
-                println!("[reap] No dependencies found for {}.", pkg);
-            }
-            let status = std::process::Command::new(&bin)
-                .arg("-S")
-                .arg(&pkg)
-                .status()?;
-            Ok((pkg, status.success()))
-        }));
-    }
-    let results = join_all(tasks).await;
-    for res in results {
-        match res {
-            Ok(Ok((pkg, true))) => println!("[reap] Installed {}.", pkg.green()),
-            Ok(Ok((pkg, false))) => eprintln!("[reap] Install failed for {}.", pkg.red()),
-            Ok(Err(e)) => eprintln!("[reap] Task error: {}", e),
-            Err(e) => eprintln!("[reap] Task join error: {}", e),
+    println!("[reap] Installing packages: {:?} (native AUR)...", pkgs);
+    let log = crate::tui::LogPane::default();
+    let opts = crate::core::InstallOptions::default();
+
+    for pkg in pkgs {
+        println!("[reap] Installing {} via native AUR...", pkg.yellow());
+        if let Err(e) = crate::core::install_aur_native(pkg, &log, &opts).await {
+            eprintln!("[reap] Install failed for {}: {}", pkg.red(), e);
+        } else {
+            println!("[reap] Installed {}.", pkg.green());
         }
     }
     Ok(())
 }
 
-/// Uninstall a package
-///
-/// # Errors
-///
-/// Returns an error if the uninstallation fails.
+/// Uninstall a package using pacman directly (no yay/paru fallback)
 pub fn uninstall(package: &str) {
-    let yay = which::which("yay").is_ok();
-    let bin = if yay { "yay" } else { "pacman" };
-    println!("[reap] Uninstalling {} ({} -R)...", package.yellow(), bin);
-    let status = Command::new(bin).arg("-R").arg(package).status();
+    println!(
+        "[reap] Uninstalling {} (sudo pacman -R)...",
+        package.yellow()
+    );
+    let status = Command::new("sudo")
+        .args(["pacman", "-R", package])
+        .status();
     match status {
         Ok(s) if s.success() => println!("[reap] Uninstalled {}.", package.green()),
         Ok(_) => eprintln!("[reap] Uninstall failed for {}.", package.red()),
-        Err(e) => eprintln!("[reap] Failed to run -R <pkg>: {}", e),
+        Err(e) => eprintln!("[reap] Failed to run pacman -R: {}", e),
     }
 }
 
 /// Get PKGBUILD preview
 pub fn get_pkgbuild_preview(pkg: &str) -> String {
+    // Check in-memory cache first
+    if let Some(cached) = crate::aur_cache::get_pkgbuild(pkg) {
+        return cached;
+    }
+
+    // Check file cache
+    #[cfg(feature = "cache")]
+    if let Some(cached) = crate::utils::cache::load_pkgbuild(pkg) {
+        crate::aur_cache::put_pkgbuild(pkg, cached.clone());
+        return cached;
+    }
+
     let url = format!(
         "https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h={}",
         pkg
     );
-    if let Ok(resp) = reqwest::blocking::get(&url) {
-        if let Ok(text) = resp.text() {
-            return text;
-        }
+    if let Ok(resp) = reqwest::blocking::get(&url)
+        && let Ok(text) = resp.text()
+    {
+        // Cache in both layers
+        crate::aur_cache::put_pkgbuild(pkg, text.clone());
+        #[cfg(feature = "cache")]
+        crate::utils::cache::save_pkgbuild(pkg, &text);
+        return text;
     }
     String::from("[reap] PKGBUILD not found.")
 }
@@ -270,8 +302,37 @@ pub async fn upgrade_all() -> Result<(), Box<dyn std::error::Error + Send + Sync
         println!("[reap] No packages to upgrade (all pinned).");
         return Ok(());
     }
+
+    // Transaction recording: capture pre-upgrade state
+    let journal = crate::transaction::TransactionJournal::new();
+    let mut tx_builder = journal.begin_transaction(
+        crate::transaction::TransactionOperation::UpgradeAll,
+        to_upgrade.iter().map(|s| s.to_string()).collect(),
+    );
+
+    // Capture pre-state for all packages
+    let mut pkg_changes: Vec<crate::transaction::PackageChange> = to_upgrade
+        .iter()
+        .map(|pkg| crate::transaction::capture_pre_state(pkg, &crate::core::Source::Aur))
+        .collect();
+
     println!("[reap] Upgrading {} packages...", to_upgrade.len());
     let res = install(to_upgrade).await;
+
+    // Capture post-state for all packages
+    for change in &mut pkg_changes {
+        crate::transaction::capture_post_state(change);
+        tx_builder.add_package_change(change.clone());
+    }
+
+    // Save the transaction
+    let record = tx_builder.complete();
+    if let Err(e) = journal.save_transaction(&record) {
+        eprintln!("[transaction] Warning: Failed to save: {}", e);
+    } else {
+        println!("[transaction] Recorded upgrade: {}", record.id);
+    }
+
     match res {
         Ok(_) => println!("[reap] Upgrade complete."),
         Err(e) => eprintln!("[reap] Upgrade failed: {}", e),
@@ -312,20 +373,21 @@ pub fn install_local(path: &str) {
     }
 }
 
-// Get a list of outdated packages
+// Get a list of outdated packages using proper Arch version comparison
 pub fn get_outdated() -> Vec<String> {
     use crate::aur::fetch_package_info;
     use crate::pacman;
+    use crate::version::is_older;
+
     let installed = pacman::list_installed_aur();
     let mut outdated = Vec::new();
     for pkg in installed {
         let local_ver = pacman::get_version(&pkg);
-        if let Ok(remote) = fetch_package_info(&pkg) {
-            if let Some(local_ver) = local_ver {
-                if local_ver != remote.version {
-                    outdated.push(pkg);
-                }
-            }
+        if let Ok(remote) = fetch_package_info(&pkg)
+            && let Some(local_ver) = local_ver
+            && is_older(&local_ver, &remote.version)
+        {
+            outdated.push(pkg);
         }
     }
     outdated

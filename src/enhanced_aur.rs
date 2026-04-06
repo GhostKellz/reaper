@@ -46,9 +46,7 @@ pub struct EnhancedAurManager {
 
 impl EnhancedAurManager {
     pub fn new() -> Self {
-        let cache_dir = dirs::cache_dir()
-            .unwrap_or_else(|| PathBuf::from("/tmp"))
-            .join("reap/aur");
+        let cache_dir = crate::paths::aur_cache_dir();
         let _ = fs::create_dir_all(&cache_dir);
 
         Self {
@@ -260,12 +258,11 @@ impl EnhancedAurManager {
             let mut conflicts = Vec::new();
 
             for line in files.lines() {
-                if let Some(file_path) = line.split_whitespace().nth(1) {
-                    if let Some(owner) = self.check_file_owner(file_path) {
-                        if owner != package {
-                            conflicts.push((file_path.to_string(), owner));
-                        }
-                    }
+                if let Some(file_path) = line.split_whitespace().nth(1)
+                    && let Some(owner) = self.check_file_owner(file_path)
+                    && owner != package
+                {
+                    conflicts.push((file_path.to_string(), owner));
                 }
             }
 
@@ -334,20 +331,16 @@ impl EnhancedAurManager {
 
         // Check if installed version conflicts with required versions
         for dep in &pkgbuild.dependencies {
-            if let Some((dep_name, version_req)) = self.parse_version_constraint(dep) {
-                if let Some(installed_version) = self.get_installed_version(&dep_name) {
-                    if !self.version_satisfies(&installed_version, &version_req) {
-                        conflicts.push(DependencyConflict {
-                            package: package.to_string(),
-                            conflicting_with: dep_name,
-                            conflict_type: ConflictType::VersionConflict(
-                                installed_version,
-                                version_req,
-                            ),
-                            resolution: Some("Upgrade or downgrade dependency".to_string()),
-                        });
-                    }
-                }
+            if let Some((dep_name, version_req)) = self.parse_version_constraint(dep)
+                && let Some(installed_version) = self.get_installed_version(&dep_name)
+                && !self.version_satisfies(&installed_version, &version_req)
+            {
+                conflicts.push(DependencyConflict {
+                    package: package.to_string(),
+                    conflicting_with: dep_name,
+                    conflict_type: ConflictType::VersionConflict(installed_version, version_req),
+                    resolution: Some("Upgrade or downgrade dependency".to_string()),
+                });
             }
         }
 

@@ -1,5 +1,5 @@
 # Reap Release Makefile
-VERSION = 0.5.0
+VERSION := $(shell grep '^version' ../Cargo.toml | sed 's/.*"\(.*\)"/\1/')
 PACKAGE_NAME = reap
 ARCH := $(shell uname -m)
 
@@ -50,7 +50,7 @@ dist: build completions
 	cp $(BINARY) $(DIST_DIR)/
 	
 	# Copy documentation
-	cp README.md FEATURES.md SECURITY.md CHANGELOG.md LICENSE $(DIST_DIR)/
+	cp README.md SECURITY.md CHANGELOG.md LICENSE $(DIST_DIR)/
 	
 	# Copy install script
 	cp $(RELEASE_DIR)/install.sh $(DIST_DIR)/

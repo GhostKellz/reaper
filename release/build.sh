@@ -1,10 +1,10 @@
 #!/bin/bash
 # Reaper Build Script for Release Packaging
-# Creates release artifacts for v0.6.0
 
 set -e
 
-VERSION="0.6.0"
+# Get version from Cargo.toml
+VERSION=$(grep '^version' Cargo.toml | sed 's/.*"\(.*\)"/\1/')
 TARGET_DIR="target/release"
 RELEASE_DIR="release/artifacts"
 COMPLETION_DIR="completions"
@@ -195,7 +195,7 @@ package() {
     tar -czf "$RELEASE_DIR/reap-x86_64.tar.gz" \
         -C "$TARGET_DIR" reap \
         -C "../../$COMPLETION_DIR" bash zsh fish \
-        -C "../../" README.md FEATURES.md SECURITY.md COMMANDS.md CHANGELOG.md LICENSE
+        -C "../../" README.md SECURITY.md CHANGELOG.md LICENSE
     
     # Copy additional files
     cp release/PKGBUILD "$RELEASE_DIR/"
@@ -213,105 +213,45 @@ package() {
 # Generate release notes
 release_notes() {
     info "Generating release notes..."
-    
+
     cat > "$RELEASE_DIR/RELEASE_NOTES.md" << EOF
-# Reaper v$VERSION Release
+# Reaper v$VERSION
 
-🚀 **Advanced TUI with Real-time Monitoring**
+## Installation
 
-## 🔥 What's New in v0.6.0
-
-### 📊 Advanced TUI with Real-time Monitoring
-- **Real-time package operation monitoring** with live status updates
-- **Enhanced search interface** with backend filtering (AUR/Flatpak/Pacman)
-- **Queue management system** for batch operations
-- **Live log viewer** with color-coded output
-- **System monitoring tab** showing disk usage, updates, and health
-
-### 🔧 Improved Flatpak Integration
-- **Better error handling** for Flatpak operations
-- **Automatic Flathub repository setup** during installation
-- **Non-interactive installation mode** for automation
-- **Enhanced search parsing** for accurate results
-- **Flatpak availability detection** before operations
-
-### 🛠️ Enhanced Installation Experience
-- **Robust installer script** with comprehensive error handling
-- **Automatic fallback to source build** when binaries unavailable
-- **Support for multiple architectures** (x86_64, aarch64, armv7h)
-- **Improved dependency checking** with clear error messages
-- **Test suite** for verifying installation integrity
-
-### 🔒 Security & Profile Enhancements
-- **New security profile template** with strict verification
-- **Enhanced profile descriptions** for better understanding
-- **Flatpak configuration section** in main config
-- **Improved hook system** with environment variables
-
-### 🐛 Bug Fixes
-- Fixed Flatpak search result parsing issues
-- Resolved installation errors with missing error handling
-- Corrected doc comment syntax errors
-- Improved error messages throughout the codebase
-
-## 🏗️ Infrastructure Updates
-- Updated CI/CD workflow with correct test logic
-- Enhanced build script for multi-architecture support
-- Comprehensive test suite for installation verification
-- Improved release packaging process
-
-## 📥 Installation
-
-### Quick Install (Recommended)
+### Quick Install
 \`\`\`bash
 curl -sSL https://raw.githubusercontent.com/GhostKellz/reaper/main/release/install.sh | bash
 \`\`\`
 
 ### Manual Install
-1. Download \`reap-x86_64.tar.gz\`
-2. Extract: \`tar -xzf reap-x86_64.tar.gz\`
-3. Install: \`sudo cp reap /usr/local/bin/\`
-4. Install completions (optional)
-
-### From AUR
 \`\`\`bash
-# PKGBUILD included for AUR submission
-makepkg -si
+tar -xzf reap-x86_64.tar.gz
+sudo cp reap /usr/local/bin/
 \`\`\`
 
-## 🚀 Quick Start
-
+### Build from Source
 \`\`\`bash
-# Create and switch to developer profile
-reap profile create dev --template developer
-reap profile switch dev
-
-# Install with trust analysis
-reap install firefox
-reap trust score firefox
-
-# Rate a package
-reap rate firefox 5 "Excellent browser!"
-
-# Launch interactive TUI
-reap tui
-
-# System health check
-reap doctor
+git clone https://github.com/GhostKellz/reaper.git
+cd reaper
+cargo build --release
 \`\`\`
 
-## 🔧 Breaking Changes
-- Profile system replaces simple config options
-- Trust analysis now runs by default (can be disabled)
-- TUI interface completely redesigned
+## Quick Start
 
-## 📚 Documentation
-- [Features Guide](FEATURES.md)
-- [Security Guide](SECURITY.md)  
-- [Commands Reference](COMMANDS.md)
-- [API Documentation](API.md)
+\`\`\`bash
+reap search firefox       # Search packages
+reap install firefox      # Install package
+reap -Syu                  # Sync and upgrade
+reap tui                   # Interactive TUI
+reap doctor                # Health check
+\`\`\`
 
-**Full Changelog**: [CHANGELOG.md](CHANGELOG.md)
+## Documentation
+
+- [README](README.md)
+- [Security Guide](SECURITY.md)
+- [Full Changelog](CHANGELOG.md)
 EOF
 
     success "Release notes generated"

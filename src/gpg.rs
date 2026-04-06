@@ -2,7 +2,179 @@ use std::path::Path;
 use std::process::Command;
 use tokio::process::Command as TokioCommand;
 
-/// Show GPG key info (sync)
+/// Result of GPG signature verification using --status-fd parsing
+#[derive(Debug, Clone)]
+pub enum VerificationResult {
+    /// Signature is valid and key is trusted
+    Valid { key_id: String, fingerprint: String },
+    /// Signature is cryptographically valid but key is not trusted
+    ValidUntrusted { key_id: String, fingerprint: String },
+    /// Signature is invalid (bad signature)
+    Invalid {
+        #[allow(dead_code)]
+        reason: String,
+    },
+    /// Key needed to verify is missing from keyring
+    MissingKey { key_id: String },
+    /// No signature file exists
+    NoSignature,
+    /// Error running GPG
+    Error(#[allow(dead_code)] String),
+}
+
+impl VerificationResult {
+    /// Returns true only if signature is cryptographically valid (trusted or not)
+    #[allow(dead_code)]
+    pub fn is_valid(&self) -> bool {
+        matches!(
+            self,
+            VerificationResult::Valid { .. } | VerificationResult::ValidUntrusted { .. }
+        )
+    }
+
+    /// Returns true if signature is valid AND key is trusted
+    #[allow(dead_code)]
+    pub fn is_trusted(&self) -> bool {
+        matches!(self, VerificationResult::Valid { .. })
+    }
+}
+
+/// Verify a detached signature using GPG --status-fd for structured output
+pub fn verify_signature(sig_path: &Path, file_path: &Path) -> VerificationResult {
+    if !sig_path.exists() {
+        return VerificationResult::NoSignature;
+    }
+    if !file_path.exists() {
+        return VerificationResult::Error("File to verify does not exist".to_string());
+    }
+
+    // Use --status-fd 1 to get machine-readable status on stdout
+    let output = Command::new("gpg")
+        .args(["--status-fd", "1", "--verify"])
+        .arg(sig_path)
+        .arg(file_path)
+        .output();
+
+    match output {
+        Ok(out) => parse_gpg_status(&out.stdout, &out.stderr),
+        Err(e) => VerificationResult::Error(format!("Failed to run gpg: {}", e)),
+    }
+}
+
+/// Parse GPG --status-fd output for verification result
+fn parse_gpg_status(stdout: &[u8], stderr: &[u8]) -> VerificationResult {
+    let status = String::from_utf8_lossy(stdout);
+    let errors = String::from_utf8_lossy(stderr);
+
+    let mut key_id = String::new();
+    let mut fingerprint = String::new();
+    let mut good_sig = false;
+    let mut bad_sig = false;
+    let mut no_pubkey = false;
+    let mut trust_level = "UNDEFINED";
+
+    // Parse status lines (format: [GNUPG:] KEYWORD args...)
+    for line in status.lines() {
+        if !line.starts_with("[GNUPG:]") {
+            continue;
+        }
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 2 {
+            continue;
+        }
+
+        match parts[1] {
+            "GOODSIG" => {
+                good_sig = true;
+                if parts.len() > 2 {
+                    key_id = parts[2].to_string();
+                }
+            }
+            "BADSIG" => {
+                bad_sig = true;
+                if parts.len() > 2 {
+                    key_id = parts[2].to_string();
+                }
+            }
+            "ERRSIG" => {
+                // ERRSIG keyid algo hashalgo class time rc
+                // rc=9 means missing key
+                if parts.len() > 2 {
+                    key_id = parts[2].to_string();
+                }
+                if parts.len() > 7 && parts[7] == "9" {
+                    no_pubkey = true;
+                }
+            }
+            "NO_PUBKEY" => {
+                no_pubkey = true;
+                if parts.len() > 2 {
+                    key_id = parts[2].to_string();
+                }
+            }
+            "VALIDSIG" => {
+                // VALIDSIG fingerprint creation_date sig_date ... trust_model trust_level
+                if parts.len() > 2 {
+                    fingerprint = parts[2].to_string();
+                }
+            }
+            "TRUST_UNDEFINED" | "TRUST_NEVER" => trust_level = "UNDEFINED",
+            "TRUST_MARGINAL" => trust_level = "MARGINAL",
+            "TRUST_FULLY" => trust_level = "FULLY",
+            "TRUST_ULTIMATE" => trust_level = "ULTIMATE",
+            _ => {}
+        }
+    }
+
+    // Determine result
+    if bad_sig {
+        return VerificationResult::Invalid {
+            reason: format!("Bad signature from key {}", key_id),
+        };
+    }
+
+    if no_pubkey {
+        return VerificationResult::MissingKey { key_id };
+    }
+
+    if good_sig {
+        if trust_level == "FULLY" || trust_level == "ULTIMATE" {
+            return VerificationResult::Valid {
+                key_id,
+                fingerprint,
+            };
+        } else {
+            return VerificationResult::ValidUntrusted {
+                key_id,
+                fingerprint,
+            };
+        }
+    }
+
+    // No clear result - check stderr for clues
+    if errors.contains("No public key") {
+        // Try to extract key ID from stderr
+        for line in errors.lines() {
+            if line.contains("key ID")
+                && let Some(idx) = line.rfind(' ')
+            {
+                return VerificationResult::MissingKey {
+                    key_id: line[idx + 1..].to_string(),
+                };
+            }
+        }
+        return VerificationResult::MissingKey {
+            key_id: "unknown".to_string(),
+        };
+    }
+
+    VerificationResult::Error(format!("Could not parse GPG output: {}", errors))
+}
+
+/// Show GPG key info (sync) - debugging/informational output
+///
+/// This function is for user-facing key inspection, not for trust decisions.
+/// For programmatic key trust checking, use `get_trust_level()`.
 pub fn show_gpg_key_info(keyid: &str) {
     let output = Command::new("gpg")
         .args(["--list-keys", keyid, "--with-colons"])
@@ -48,156 +220,106 @@ pub fn get_trust_level(keyid: &str) -> Option<String> {
     None
 }
 
-// Use gpg_check(pkgdir) in the PKGBUILD verification step.
-
-/// Verify PKGBUILD signature in a directory
-pub fn verify_pkgbuild(pkgdir: &Path) -> bool {
+/// GPG PKGBUILD signature check returning structured result
+///
+/// Use this for programmatic verification where you need to inspect the result.
+#[allow(dead_code)] // API for callers who want structured results
+pub fn gpg_check_structured(pkgdir: &Path) -> VerificationResult {
     let sig_path = pkgdir.join("PKGBUILD.sig");
     let pkgb_path = pkgdir.join("PKGBUILD");
-    if !sig_path.exists() || !pkgb_path.exists() {
-        eprintln!("[reap] gpg :: PKGBUILD or signature missing");
-        return false;
-    }
-    let status = Command::new("gpg")
-        .arg("--verify")
-        .arg(sig_path)
-        .arg(pkgb_path)
-        .status();
-    if let Ok(s) = status {
-        if s.success() {
-            println!("[reap] gpg :: PKGBUILD signature verified");
-            return true;
-        }
-    }
-    eprintln!("[reap] gpg :: PKGBUILD signature verification failed");
-    false
+    verify_signature(&sig_path, &pkgb_path)
 }
 
-/// Enhanced GPG PKGBUILD signature check with auto key fetch
+/// Enhanced GPG PKGBUILD signature check with auto key fetch and console output
+///
+/// This wraps `verify_signature()` and adds:
+/// - Console output for user feedback
+/// - Auto key fetch on missing key
+/// - Retry after key import
 pub fn gpg_check(pkgdir: &Path) -> Result<(), String> {
     let sig_path = pkgdir.join("PKGBUILD.sig");
     let pkgb_path = pkgdir.join("PKGBUILD");
-    if !sig_path.exists() || !pkgb_path.exists() {
-        return Err("[reap] gpg :: PKGBUILD or signature missing".to_string());
-    }
-    let output = Command::new("gpg")
-        .arg("--verify")
-        .arg(&sig_path)
-        .arg(&pkgb_path)
-        .output();
-    if let Ok(out) = output {
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        if out.status.success() {
-            println!("[reap] gpg :: PKGBUILD signature verified");
-            // Show trust level if possible
-            if let Some(keyid) = stdout.lines().find_map(|line| {
-                if line.starts_with("pub:") {
-                    let fields: Vec<&str> = line.split(':').collect();
-                    if fields.len() > 4 {
-                        return Some(fields[4].to_string());
-                    }
-                }
-                None
-            }) {
-                if let Some(trust) = get_trust_level(&keyid) {
-                    println!("[reap] gpg :: Key {} trust level: {}", keyid, trust);
-                }
+
+    // Use structured verification
+    let result = verify_signature(&sig_path, &pkgb_path);
+
+    match result {
+        VerificationResult::Valid { key_id, .. } => {
+            println!("[reap] gpg :: PKGBUILD signature verified (trusted)");
+            if let Some(trust) = get_trust_level(&key_id) {
+                println!("[reap] gpg :: Key {} trust level: {}", key_id, trust);
             }
             Ok(())
-        } else {
-            // Try to extract missing keyid from error output
-            let mut keyid = None;
-            for line in stderr.lines().chain(stdout.lines()) {
-                if line.contains("NO_PUBKEY") {
-                    // Example: gpg: Signature made ... using RSA key ABCDEF1234567890
-                    if let Some(idx) = line.find("NO_PUBKEY ") {
-                        keyid = line[idx + 10..]
-                            .split_whitespace()
-                            .next()
-                            .map(|s| s.to_string());
-                    }
-                } else if line.contains("key ID") {
-                    // Example: gpg: Can't check signature: No public key
-                    //         gpg: Signature made ... using DSA key ID 12345678
-                    if let Some(idx) = line.find("key ID ") {
-                        keyid = line[idx + 7..]
-                            .split_whitespace()
-                            .next()
-                            .map(|s| s.to_string());
-                    }
-                }
+        }
+        VerificationResult::ValidUntrusted { key_id, .. } => {
+            println!(
+                "[reap] gpg :: PKGBUILD signature valid but key not fully trusted"
+            );
+            if let Some(trust) = get_trust_level(&key_id) {
+                println!("[reap] gpg :: Key {} trust level: {}", key_id, trust);
             }
-            if let Some(keyid) = keyid {
-                println!("[reap] gpg :: Missing public key: {}", keyid);
-                let keyserver = "hkps://keys.openpgp.org";
-                println!(
-                    "[reap] gpg :: Attempting to fetch key {} from {}...",
-                    keyid, keyserver
-                );
-                let fetch = Command::new("gpg")
-                    .args(["--keyserver", keyserver, "--recv-keys", &keyid])
-                    .status();
-                match fetch {
-                    Ok(s) if s.success() => {
-                        println!(
-                            "[reap] gpg :: Successfully imported key {} from {}",
-                            keyid, keyserver
-                        );
-                        // Re-run verification
-                        let retry = Command::new("gpg")
-                            .arg("--verify")
-                            .arg(&sig_path)
-                            .arg(&pkgb_path)
-                            .status();
-                        if let Ok(s) = retry {
-                            if s.success() {
-                                println!(
-                                    "[reap] gpg :: PKGBUILD signature verified after key import"
-                                );
-                                Ok(())
-                            } else {
-                                Err(format!(
-                                    "[reap] gpg :: Verification still failed after importing key {}",
-                                    keyid
-                                ))
-                            }
-                        } else {
-                            Err(
-                                "[reap] gpg :: Error re-running verification after key import"
-                                    .to_string(),
-                            )
+            Ok(())
+        }
+        VerificationResult::MissingKey { key_id } => {
+            println!("[reap] gpg :: Missing public key: {}", key_id);
+
+            // Attempt auto key fetch
+            let keyserver = "hkps://keys.openpgp.org";
+            println!(
+                "[reap] gpg :: Attempting to fetch key {} from {}...",
+                key_id, keyserver
+            );
+
+            let fetch = Command::new("gpg")
+                .args(["--keyserver", keyserver, "--recv-keys", &key_id])
+                .status();
+
+            match fetch {
+                Ok(s) if s.success() => {
+                    println!(
+                        "[reap] gpg :: Successfully imported key {} from {}",
+                        key_id, keyserver
+                    );
+                    // Re-run verification using verify_signature
+                    let retry = verify_signature(&sig_path, &pkgb_path);
+                    match retry {
+                        VerificationResult::Valid { .. }
+                        | VerificationResult::ValidUntrusted { .. } => {
+                            println!(
+                                "[reap] gpg :: PKGBUILD signature verified after key import"
+                            );
+                            Ok(())
                         }
+                        _ => Err(format!(
+                            "[reap] gpg :: Verification still failed after importing key {}",
+                            key_id
+                        )),
                     }
-                    Ok(_) => Err(format!(
-                        "[reap] gpg :: Failed to import key {} from {}",
-                        keyid, keyserver
-                    )),
-                    Err(e) => Err(format!(
-                        "[reap] gpg :: Error running gpg --recv-keys: {}",
-                        e
-                    )),
                 }
-            } else {
-                // Could not extract keyid
-                eprintln!("[reap] gpg :: Could not extract missing keyid from error output:");
-                for line in stderr.lines() {
-                    eprintln!("[gpg] {line}");
-                }
-                Err(
-                    "[reap] gpg :: PKGBUILD signature verification failed and no keyid found"
-                        .to_string(),
-                )
+                Ok(_) => Err(format!(
+                    "[reap] gpg :: Failed to import key {} from {}",
+                    key_id, keyserver
+                )),
+                Err(e) => Err(format!(
+                    "[reap] gpg :: Error running gpg --recv-keys: {}",
+                    e
+                )),
             }
         }
-    } else {
-        Err("[reap] gpg :: Error running gpg --verify".to_string())
+        VerificationResult::Invalid { reason } => {
+            Err(format!("[reap] gpg :: Invalid signature: {}", reason))
+        }
+        VerificationResult::NoSignature => {
+            Err("[reap] gpg :: PKGBUILD or signature missing".to_string())
+        }
+        VerificationResult::Error(e) => {
+            Err(format!("[reap] gpg :: Error: {}", e))
+        }
     }
 }
 
 /// Refresh all GPG keys
 pub fn refresh_keys() {
-    // TODO: Wire this into CLI flow in core::handle_cli()
     let status = Command::new("gpg").arg("--refresh-keys").status();
     if let Ok(s) = status {
         if s.success() {
@@ -254,7 +376,10 @@ pub async fn check_key(keyid: &str) {
     }
 }
 
-/// Show GPG key details
+/// Show GPG key details - user-facing informational output
+///
+/// Wrapper for `show_gpg_key_info()`. Use for debugging or user inspection,
+/// not for programmatic trust decisions.
 pub fn show_key(keyid: &str) {
     show_gpg_key_info(keyid);
 }
@@ -266,5 +391,91 @@ pub fn key_exists(keyid: &str) -> bool {
         out.status.success()
     } else {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_verification_result_is_valid() {
+        // Test Valid is recognized as valid
+        let valid = VerificationResult::Valid {
+            key_id: "ABC123".to_string(),
+            fingerprint: "0123456789ABCDEF".to_string(),
+        };
+        assert!(valid.is_valid());
+        assert!(valid.is_trusted());
+
+        // Test ValidUntrusted is valid but not trusted
+        let valid_untrusted = VerificationResult::ValidUntrusted {
+            key_id: "ABC123".to_string(),
+            fingerprint: "0123456789ABCDEF".to_string(),
+        };
+        assert!(valid_untrusted.is_valid());
+        assert!(!valid_untrusted.is_trusted());
+
+        // Test Invalid is not valid
+        let invalid = VerificationResult::Invalid {
+            reason: "test".to_string(),
+        };
+        assert!(!invalid.is_valid());
+        assert!(!invalid.is_trusted());
+
+        // Test MissingKey is not valid
+        let missing = VerificationResult::MissingKey {
+            key_id: "ABC123".to_string(),
+        };
+        assert!(!missing.is_valid());
+        assert!(!missing.is_trusted());
+
+        // Test NoSignature is not valid
+        let no_sig = VerificationResult::NoSignature;
+        assert!(!no_sig.is_valid());
+        assert!(!no_sig.is_trusted());
+
+        // Test Error is not valid
+        let error = VerificationResult::Error("test".to_string());
+        assert!(!error.is_valid());
+        assert!(!error.is_trusted());
+    }
+
+    #[test]
+    fn test_verification_result_variants_distinguishable() {
+        // Ensure we can pattern match all variants
+        let results = vec![
+            VerificationResult::Valid {
+                key_id: "A".to_string(),
+                fingerprint: "B".to_string(),
+            },
+            VerificationResult::ValidUntrusted {
+                key_id: "A".to_string(),
+                fingerprint: "B".to_string(),
+            },
+            VerificationResult::Invalid {
+                reason: "bad".to_string(),
+            },
+            VerificationResult::MissingKey {
+                key_id: "A".to_string(),
+            },
+            VerificationResult::NoSignature,
+            VerificationResult::Error("err".to_string()),
+        ];
+
+        let mut valid_count = 0;
+        let mut trusted_count = 0;
+
+        for r in &results {
+            if r.is_valid() {
+                valid_count += 1;
+            }
+            if r.is_trusted() {
+                trusted_count += 1;
+            }
+        }
+
+        assert_eq!(valid_count, 2); // Valid and ValidUntrusted
+        assert_eq!(trusted_count, 1); // Only Valid
     }
 }

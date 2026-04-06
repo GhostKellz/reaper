@@ -2,6 +2,65 @@
 
 All notable changes to this project will be documented in this file.
 
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.8.0] - 2026-04-06
+
+### 🔄 Added - Transaction Rollback System
+- **Transaction journal** recording all install/upgrade/remove operations
+- **Rollback commands**: `reap rollback list`, `show`, `dry-run`, `apply`
+- **Artifact-backed rollback** using pacman cache and retained AUR builds
+- **Rollback preview** showing planned downgrades, reinstalls, and removals
+- **Dependency analysis** detecting potential breaks before rollback execution
+- **Rollback attempt tracking** with success/partial/failed status recording
+- **Split package tracking** - AUR split packages (e.g., `-debug`) now tracked in transactions
+- **Post-rollback verification** confirming package states match expectations
+- **Non-zero exit codes** for scripting reliability on rollback failures
+
+### 🔧 Added - Enhanced Configuration System
+- **Multi-source config merging** with precedence hierarchy
+- **Environment variable overrides** for all configuration options
+- **Profile-aware configuration** inheritance
+- **Robust validation** with detailed error reporting
+
+### 📦 Added - Development Package Tracking
+- **VCS package monitoring** for Git, SVN, Mercurial, Bazaar
+- **Automated update detection** for `-git` and other development packages
+- **Development package database** with JSON persistence
+- **Smart caching** and build directory management
+
+### 🔗 Added - Advanced Dependency Resolution
+- **Topological dependency sorting** for correct install order
+- **Circular dependency detection** and resolution strategies
+- **Conflict analysis** with detailed reporting
+- **Dependency graph visualization**
+- **Install plan generation** with reasoning
+
+### 🛠️ Added - Infrastructure
+- Error handling improvements with multi-error aggregation
+- News integration for Arch Linux news parsing and notifications
+- Interactive search & install with dynamic filtering
+- Advanced build system with comprehensive makepkg integration
+- Repository management with multi-repo support and priorities
+- GitHub Actions CI/CD workflows for build, test, and release
+- Docker support with multi-platform builds
+- Makefile for local development workflow
+
+### 🔧 Changed
+- **Trust CLI** commands now: `score`, `scan`, `stats`, `update`
+- **Transaction recording** captures all affected packages including dependencies
+- **AUR installs** now detect and track split packages automatically
+
+### 🐛 Fixed
+- **Version display** in `rollback show` now shows actual version instead of `:`
+- **Split package cleanup** - rollback now removes all packages from a transaction
+- **Cache test flakiness** - tests now use unique keys to avoid parallel test interference
+- **Documentation drift** - `docs/usage/commands.md` reconciled with actual CLI surface
+- Various compilation warnings and code improvements
+
 ## [0.5.0] - 2025-06-16
 
 ### 🛡️ Added - Trust & Security Engine

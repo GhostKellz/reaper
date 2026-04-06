@@ -1,4 +1,4 @@
-# 🛠️ INSTALL.md — Building and Installing Reap
+# Installation
 
 ## Prerequisites
 - Rust (latest stable, install via https://rustup.rs)

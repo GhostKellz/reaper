@@ -3,72 +3,138 @@ use clap::{Parser, Subcommand};
 #[derive(Parser, Debug)]
 #[command(
     name = "reap",
-    version = "0.6.0",
-    about = "Reaper: Secure, unified Rust-powered meta package manager\n\nUSAGE EXAMPLES:\n  reap install <pkg> --fast\n  reap install <pkg> --strict\n  reap install <pkg> --insecure\n  reap tap add mytap https://github.com/me/mytap.git\n  reap doctor --fix\n\nConfig precedence: CLI flag > ~/.config/reap/reap.toml > default\nSee README.md for more.",
-    long_about = None
+    version = "0.8.0",
+    about = "Reaper - A fast, secure AUR helper for Arch Linux",
+    long_about = "Reaper: Secure, unified Rust-powered meta package manager\n\n\
+USAGE EXAMPLES:\n  \
+  reap install <pkg>           Install a package\n  \
+  reap search <term>           Search for packages\n  \
+  reap remove <pkg>            Remove a package\n  \
+  reap upgrade                 Upgrade all packages\n  \
+  reap tap add <name> <url>    Add a tap repository\n  \
+  reap doctor                  Run system diagnostics\n\n\
+PACMAN-STYLE FLAGS:\n  \
+  reap -S <pkg>                Install packages (like pacman -S)\n  \
+  reap -Ss <term>              Search packages (like pacman -Ss)\n  \
+  reap -R <pkg>                Remove packages (like pacman -R)\n  \
+  reap -Syu                    Sync and upgrade (like pacman -Syu)\n  \
+  reap -Qu                     Query upgradable packages\n\n\
+Config: ~/.config/reaper/reap.toml"
 )]
 pub struct Cli {
-    #[command(subcommand)]
-    pub command: Commands,
-    #[arg(short = 'S', long = "sync", value_name = "PKG", num_args = 0.., conflicts_with_all = ["remove", "search", "local"])]
-    pub sync: Option<Vec<String>>,
-    #[arg(short = 'R', long = "remove", value_name = "PKG", num_args = 0.., conflicts_with_all = ["sync", "search", "upgrade", "local"], help = "Remove a package")]
-    pub remove: Option<Vec<String>>,
-    #[arg(long = "local", value_name = "PATH", num_args = 0.., conflicts_with_all = ["sync", "remove", "search", "upgrade"])]
-    pub local: Option<Vec<String>>,
-    #[arg(short = 'Q', long = "search", value_name = "TERM", num_args = 0.., conflicts_with_all = ["sync", "remove", "upgrade", "local"], help = "Search for a package")]
-    pub search: Option<Vec<String>>,
+    /// Sync operation (install packages) - pacman -S style
+    #[arg(short = 'S', long = "sync", help = "Sync/Install packages (pacman -S)")]
+    pub sync: bool,
+
+    /// Remove packages - pacman -R style
+    #[arg(
+        short = 'R',
+        long = "remove-flag",
+        help = "Remove packages (pacman -R)"
+    )]
+    pub remove_flag: bool,
+
+    /// Query packages - pacman -Q style
+    #[arg(short = 'Q', long = "query", help = "Query packages (pacman -Q)")]
+    pub query: bool,
+
+    /// Refresh database - pacman -y style
     #[arg(short = 'y', long = "refresh", help = "Refresh package database")]
     pub refresh: bool,
-    #[arg(short = 'u', long = "upgrade", help = "Upgrade packages")]
-    pub upgrade: bool,
-    #[arg(long = "syncdb", help = "Sync package database")]
-    pub syncdb: bool,
-    #[arg(short = 'U', long = "upgradeall", help = "Upgrade all packages")]
-    pub upgradeall: bool,
-    #[arg(long = "install", value_name = "PKG", help = "Install a package")]
-    pub install: Option<String>,
-    #[arg(
-        long = "backend",
-        value_name = "BACKEND",
-        default_value = "aur",
-        help = "Select backend: aur, flatpak"
-    )]
-    pub backend: String,
-    #[arg(long = "edit", help = "Edit PKGBUILD before building")]
-    pub edit: bool,
-    #[arg(long = "noconfirm", help = "Skip confirmation prompts")]
-    pub noconfirm: bool,
-    #[arg(long = "dry-run", help = "Show what would be done, but do not install")]
-    pub dry_run: bool,
-    #[arg(
-        long = "downgrade",
-        value_name = "PKG=VER",
-        help = "Downgrade package to a specific version"
-    )]
-    pub downgrade: Option<String>,
-    #[arg(long = "diff", help = "Show PKGBUILD diff before install/upgrade")]
-    pub diff: bool,
-    #[arg(
-        long = "resolve-deps",
-        help = "Automatically install missing dependencies before build"
-    )]
-    pub resolve_deps: bool,
-    #[arg(
-        long = "insecure",
-        help = "Skip GPG verification for tap installs (not recommended)"
-    )]
-    pub insecure: bool,
-    #[arg(
-        long = "gpg-keyserver",
-        value_name = "URL",
-        help = "Set GPG keyserver for key fetch"
-    )]
-    pub gpg_keyserver: Option<String>,
-    #[arg(long = "audit", help = "Audit/log actions without executing them")]
-    pub audit: bool,
-    #[arg(long = "yes", help = "Assume yes for all prompts (non-interactive)")]
-    pub yes: bool,
+
+    /// Upgrade - pacman -u style
+    #[arg(short = 'u', long = "upgrade-flag", help = "Upgrade packages")]
+    pub upgrade_flag: bool,
+
+    /// Search - pacman -s style (used with -S for -Ss)
+    #[arg(short = 's', long = "search-flag", help = "Search for packages")]
+    pub search_flag: bool,
+
+    /// Clean cache - pacman -c style
+    #[arg(short = 'c', long = "clean-flag", help = "Clean package cache")]
+    pub clean_flag: bool,
+
+    /// Package arguments (for pacman-style usage)
+    #[arg(trailing_var_arg = true)]
+    pub packages: Vec<String>,
+
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+}
+
+impl Cli {
+    /// Convert pacman-style flags to an equivalent command
+    pub fn resolve_pacman_flags(&self) -> Option<PacmanAction> {
+        // -Syu: sync database + upgrade
+        if self.sync && self.refresh && self.upgrade_flag {
+            return Some(PacmanAction::SyncUpgrade);
+        }
+
+        // -Ss: search
+        if self.sync && self.search_flag {
+            return Some(PacmanAction::Search(self.packages.clone()));
+        }
+
+        // -Sy: refresh database
+        if self.sync && self.refresh && !self.upgrade_flag {
+            return Some(PacmanAction::RefreshDb);
+        }
+
+        // -Su: upgrade only
+        if self.sync && self.upgrade_flag && !self.refresh {
+            return Some(PacmanAction::Upgrade);
+        }
+
+        // -S: install
+        if self.sync && !self.packages.is_empty() {
+            return Some(PacmanAction::Install(self.packages.clone()));
+        }
+
+        // -R: remove
+        if self.remove_flag && !self.packages.is_empty() {
+            return Some(PacmanAction::Remove(self.packages.clone()));
+        }
+
+        // -Qu: query upgradable
+        if self.query && self.upgrade_flag {
+            return Some(PacmanAction::QueryUpgradable);
+        }
+
+        // -Q: query installed
+        if self.query && !self.packages.is_empty() {
+            return Some(PacmanAction::QueryInstalled(self.packages.clone()));
+        }
+
+        // -Sc: clean cache
+        if self.sync && self.clean_flag {
+            return Some(PacmanAction::CleanCache);
+        }
+
+        None
+    }
+}
+
+/// Actions derived from pacman-style flags
+#[derive(Debug, Clone)]
+pub enum PacmanAction {
+    /// -Syu: sync and upgrade all
+    SyncUpgrade,
+    /// -Sy: refresh database
+    RefreshDb,
+    /// -Su: upgrade packages
+    Upgrade,
+    /// -S <pkg>: install packages
+    Install(Vec<String>),
+    /// -Ss <term>: search packages
+    Search(Vec<String>),
+    /// -R <pkg>: remove packages
+    Remove(Vec<String>),
+    /// -Qu: query upgradable
+    QueryUpgradable,
+    /// -Q <pkg>: query if installed
+    QueryInstalled(Vec<String>),
+    /// -Sc: clean cache
+    CleanCache,
 }
 
 #[derive(Subcommand, Debug)]
@@ -82,6 +148,8 @@ pub enum Commands {
         binary_only: bool,
         #[arg(long)]
         diff: bool,
+        #[arg(long, help = "Skip signature verification (use with caution)")]
+        insecure: bool,
     },
     /// Install multiple packages in parallel
     BatchInstall {
@@ -103,12 +171,15 @@ pub enum Commands {
     ParallelUpgrade { pkgs: Vec<String> },
     /// Upgrade all packages
     UpgradeAll,
-    /// Upgrade Flatpak packages
+    /// Upgrade all Flatpak applications (alias for flatpak upgrade)
     FlatpakUpgrade,
     /// Audit a package
     Audit { pkg: String },
-    /// Rollback a package
-    Rollback { pkg: String },
+    /// Transaction rollback management
+    Rollback {
+        #[command(subcommand)]
+        cmd: RollbackCmd,
+    },
     /// Sync package database
     SyncDb,
     /// Pin a package
@@ -134,7 +205,7 @@ pub enum Commands {
         #[command(subcommand)]
         cmd: GpgCmd,
     },
-    /// Flatpak commands
+    /// Flatpak application management
     Flatpak {
         #[command(subcommand)]
         cmd: FlatpakCmd,
@@ -183,17 +254,66 @@ pub enum Commands {
         #[command(subcommand)]
         cmd: AurCmd,
     },
+    /// Debian package (.deb) handling
+    Dpkg {
+        #[command(subcommand)]
+        cmd: DpkgCmd,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum DpkgCmd {
+    /// Show information about a .deb file
+    Info {
+        /// Path to the .deb file
+        path: String,
+    },
+    /// Install a .deb file (converts to Arch package using debtap)
+    Install {
+        /// Path to the .deb file
+        path: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
 pub enum FlatpakCmd {
-    Search { query: String },
-    Install { pkg: String },
-    Remove { pkg: String },
+    /// Search for Flatpak applications
+    Search {
+        /// Search query
+        query: String,
+    },
+    /// Install a Flatpak application
+    Install {
+        /// Application ID (e.g., org.mozilla.firefox)
+        app_id: String,
+        #[arg(long, help = "Also setup Flathub remote if not configured")]
+        setup_flathub: bool,
+    },
+    /// Remove a Flatpak application
+    Remove {
+        /// Application ID to remove
+        app_id: String,
+    },
+    /// Update Flatpak metadata/appstream data
     Update,
+    /// List installed Flatpak applications
     List,
+    /// Upgrade all Flatpak applications
     Upgrade,
-    Audit { pkg: String },
+    /// Show detailed information about an application
+    Info {
+        /// Application ID
+        app_id: String,
+    },
+    /// Security audit of a Flatpak application's permissions
+    Audit {
+        /// Application ID to audit
+        app_id: String,
+    },
+    /// List configured Flatpak remotes
+    Remotes,
+    /// Check for available updates
+    CheckUpdates,
 }
 
 #[derive(Subcommand, Debug)]
@@ -257,26 +377,49 @@ pub enum ProfileCmd {
     Show { name: String },
     /// Delete a profile
     Delete { name: String },
-    /// Edit profile settings
-    Edit {
-        name: String,
-        #[arg(long)]
-        backend_order: Option<String>,
-        #[arg(long)]
-        parallel_jobs: Option<usize>,
-    },
 }
 
 #[derive(Subcommand, Debug)]
 pub enum TrustCmd {
     /// Analyze package trust score
     Score { pkg: String },
-    /// Scan all installed packages
+    /// Scan all installed AUR packages for trust scores
     Scan,
-    /// Show trust statistics
+    /// Show aggregate trust statistics
     Stats,
     /// Update trust database
     Update,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum RollbackCmd {
+    /// List recent transactions
+    List {
+        /// Maximum number of transactions to show
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+        /// Filter by package name
+        #[arg(short, long)]
+        package: Option<String>,
+    },
+    /// Show details of a specific transaction
+    Show {
+        /// Transaction ID
+        txid: String,
+    },
+    /// Preview what a rollback would do (dry-run)
+    DryRun {
+        /// Transaction ID to preview rollback for
+        txid: String,
+    },
+    /// Execute a rollback to restore previous package state
+    Apply {
+        /// Transaction ID to rollback
+        txid: String,
+        /// Skip confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -311,7 +454,7 @@ pub enum PerfCmd {
 pub enum SecurityCmd {
     /// Audit PKGBUILD for security issues
     Audit { pkg: String },
-    /// Scan all installed packages for security
+    /// Scan all installed AUR packages for security issues
     ScanAll,
     /// Show security statistics
     Stats,

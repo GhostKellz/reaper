@@ -1,4 +1,4 @@
-# 🔌 Reaper API Reference
+# API Reference
 
 This document provides API reference for developers working with or extending Reaper.
 

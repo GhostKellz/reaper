@@ -1,11 +1,11 @@
+use anyhow::{Context, Result, anyhow};
+use chrono::{DateTime, Utc};
+use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use anyhow::{anyhow, Context, Result};
-use serde::{Deserialize, Serialize};
-use chrono::{DateTime, Utc};
-use regex::Regex;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityConfig {
@@ -36,7 +36,7 @@ pub struct PkgbuildScanning {
 impl Default for SecurityConfig {
     fn default() -> Self {
         Self {
-            keyring_dir: dirs::data_dir().unwrap_or_default().join("reap/keyring"),
+            keyring_dir: crate::paths::keyring_dir(),
             trusted_keyservers: vec![
                 "keyserver.ubuntu.com".to_string(),
                 "keys.openpgp.org".to_string(),
@@ -55,7 +55,7 @@ impl Default for SecurityConfig {
                 detect_credentials: true,
                 risk_threshold: 7.0,
             },
-            trust_database: dirs::data_dir().unwrap_or_default().join("reap/trust.db"),
+            trust_database: crate::paths::trust_db(),
         }
     }
 }
@@ -86,7 +86,10 @@ pub enum SecurityFlag {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SignatureStatus {
-    Valid { key_id: String, trust_level: TrustLevel },
+    Valid {
+        key_id: String,
+        trust_level: TrustLevel,
+    },
     Invalid(String),
     Missing,
     Expired,
@@ -112,7 +115,12 @@ pub struct SecurityManager {
 impl SecurityManager {
     pub fn new(config: SecurityConfig) -> Result<Self> {
         fs::create_dir_all(&config.keyring_dir)?;
-        fs::create_dir_all(config.trust_database.parent().unwrap_or(&config.keyring_dir))?;
+        fs::create_dir_all(
+            config
+                .trust_database
+                .parent()
+                .unwrap_or(&config.keyring_dir),
+        )?;
 
         let suspicious_patterns = Self::compile_suspicious_patterns()?;
         let credential_patterns = Self::compile_credential_patterns()?;
@@ -125,8 +133,15 @@ impl SecurityManager {
         })
     }
 
-    pub fn verify_package_signature(&self, package_path: &Path, signature_path: &Path) -> Result<SignatureStatus> {
-        println!("[security] Verifying signature for {}", package_path.display());
+    pub fn verify_package_signature(
+        &self,
+        package_path: &Path,
+        signature_path: &Path,
+    ) -> Result<SignatureStatus> {
+        println!(
+            "[security] Verifying signature for {}",
+            package_path.display()
+        );
 
         if !signature_path.exists() {
             return Ok(SignatureStatus::Missing);
@@ -135,7 +150,11 @@ impl SecurityManager {
         let output = Command::new("gpg")
             .args(["--homedir", &self.config.keyring_dir.to_string_lossy()])
             .args(["--status-fd", "1"])
-            .args(["--verify", &signature_path.to_string_lossy(), &package_path.to_string_lossy()])
+            .args([
+                "--verify",
+                &signature_path.to_string_lossy(),
+                &package_path.to_string_lossy(),
+            ])
             .output()
             .context("Failed to execute gpg verification")?;
 
@@ -159,19 +178,28 @@ impl SecurityManager {
                 println!("[security] ✅ Successfully imported key from {}", keyserver);
                 return Ok(());
             } else {
-                println!("[security] ⚠️  Failed to import from {}: {}",
-                    keyserver, String::from_utf8_lossy(&output.stderr));
+                println!(
+                    "[security] ⚠️  Failed to import from {}: {}",
+                    keyserver,
+                    String::from_utf8_lossy(&output.stderr)
+                );
             }
         }
 
-        Err(anyhow!("Failed to import key {} from any keyserver", key_id))
+        Err(anyhow!(
+            "Failed to import key {} from any keyserver",
+            key_id
+        ))
     }
 
     pub fn scan_pkgbuild(&self, pkgbuild_path: &Path) -> Result<SecurityAnalysis> {
-        println!("[security] 🔍 Scanning PKGBUILD: {}", pkgbuild_path.display());
+        println!(
+            "[security] 🔍 Scanning PKGBUILD: {}",
+            pkgbuild_path.display()
+        );
 
-        let content = fs::read_to_string(pkgbuild_path)
-            .with_context(|| "Failed to read PKGBUILD")?;
+        let content =
+            fs::read_to_string(pkgbuild_path).with_context(|| "Failed to read PKGBUILD")?;
 
         let mut analysis = SecurityAnalysis {
             risk_score: 0.0,
@@ -197,21 +225,29 @@ impl SecurityManager {
 
         analysis.risk_score = self.calculate_risk_score(&analysis);
 
-        println!("[security] Analysis complete - Risk Score: {:.1}/10", analysis.risk_score);
+        println!(
+            "[security] Analysis complete - Risk Score: {:.1}/10",
+            analysis.risk_score
+        );
         Ok(analysis)
     }
 
-    pub fn update_trust_entry(&mut self, package_name: &str, analysis: SecurityAnalysis) -> Result<()> {
+    pub fn update_trust_entry(
+        &mut self,
+        package_name: &str,
+        analysis: SecurityAnalysis,
+    ) -> Result<()> {
         let trust_entry = TrustEntry {
             package_name: package_name.to_string(),
             trust_score: 10.0 - analysis.risk_score, // Invert risk to get trust
             last_updated: Utc::now(),
             security_flags: analysis.flags,
             signature_status: SignatureStatus::Missing, // Will be updated separately
-            maintainer_trust: 5.0, // Default neutral trust
+            maintainer_trust: 5.0,                      // Default neutral trust
         };
 
-        self.trust_cache.insert(package_name.to_string(), trust_entry);
+        self.trust_cache
+            .insert(package_name.to_string(), trust_entry);
         self.save_trust_database()?;
 
         Ok(())
@@ -236,24 +272,25 @@ impl SecurityManager {
 
     fn compile_suspicious_patterns() -> Result<Vec<Regex>> {
         let patterns = [
-            r"curl\s+.*\|\s*(bash|sh)", // Piping curl to shell
-            r"wget\s+.*\|\s*(bash|sh)", // Piping wget to shell
-            r"chmod\s+\+x.*tmp", // Making temp files executable
-            r"/etc/passwd", // Accessing password file
-            r"/etc/shadow", // Accessing shadow file
+            r"curl\s+.*\|\s*(bash|sh)",    // Piping curl to shell
+            r"wget\s+.*\|\s*(bash|sh)",    // Piping wget to shell
+            r"chmod\s+\+x.*tmp",           // Making temp files executable
+            r"/etc/passwd",                // Accessing password file
+            r"/etc/shadow",                // Accessing shadow file
             r"sudo\s+.*without.*password", // Sudo without password
-            r"rm\s+-rf\s+/", // Dangerous recursive removal
-            r"dd\s+if=.*of=.*", // Direct disk operations
-            r"nc\s+.*-e", // Netcat with command execution
-            r"python.*-c.*exec", // Python exec patterns
-            r"eval\s*\(", // Eval functions
-            r"system\s*\(", // System calls
-            r"\$\(.*\)", // Command substitution
-            r"`.*`", // Backtick command execution
-            r"base64\s+.*decode", // Base64 decode (possible obfuscation)
+            r"rm\s+-rf\s+/",               // Dangerous recursive removal
+            r"dd\s+if=.*of=.*",            // Direct disk operations
+            r"nc\s+.*-e",                  // Netcat with command execution
+            r"python.*-c.*exec",           // Python exec patterns
+            r"eval\s*\(",                  // Eval functions
+            r"system\s*\(",                // System calls
+            r"\$\(.*\)",                   // Command substitution
+            r"`.*`",                       // Backtick command execution
+            r"base64\s+.*decode",          // Base64 decode (possible obfuscation)
         ];
 
-        patterns.iter()
+        patterns
+            .iter()
             .map(|pattern| Regex::new(pattern))
             .collect::<Result<Vec<_>, _>>()
             .context("Failed to compile suspicious patterns")
@@ -269,21 +306,28 @@ impl SecurityManager {
             r"private_key.*BEGIN.*PRIVATE.*KEY",
             r"-----BEGIN\s+RSA\s+PRIVATE\s+KEY-----",
             r"ssh-rsa\s+[A-Za-z0-9+/]+=*",
-            r"AKIA[0-9A-Z]{16}", // AWS Access Key
+            r"AKIA[0-9A-Z]{16}",        // AWS Access Key
             r"sk_live_[0-9a-zA-Z]{24}", // Stripe Secret Key
         ];
 
-        patterns.iter()
+        patterns
+            .iter()
             .map(|pattern| Regex::new(pattern))
             .collect::<Result<Vec<_>, _>>()
             .context("Failed to compile credential patterns")
     }
 
-    fn scan_for_suspicious_patterns(&self, content: &str, analysis: &mut SecurityAnalysis) -> Result<()> {
+    fn scan_for_suspicious_patterns(
+        &self,
+        content: &str,
+        analysis: &mut SecurityAnalysis,
+    ) -> Result<()> {
         for (line_num, line) in content.lines().enumerate() {
             for pattern in &self.suspicious_patterns {
                 if pattern.is_match(line) {
-                    analysis.suspicious_lines.push(format!("Line {}: {}", line_num + 1, line));
+                    analysis
+                        .suspicious_lines
+                        .push(format!("Line {}: {}", line_num + 1, line));
                     analysis.risk_score += 1.0;
 
                     // Add specific flags based on pattern
@@ -320,7 +364,9 @@ impl SecurityManager {
                     "credential"
                 };
 
-                analysis.flags.push(SecurityFlag::HardcodedCredentials(credential_type.to_string()));
+                analysis.flags.push(SecurityFlag::HardcodedCredentials(
+                    credential_type.to_string(),
+                ));
                 analysis.risk_score += 2.0; // Credentials are serious
             }
         }
@@ -328,17 +374,31 @@ impl SecurityManager {
         Ok(())
     }
 
-    fn scan_for_suspicious_domains(&self, content: &str, analysis: &mut SecurityAnalysis) -> Result<()> {
+    fn scan_for_suspicious_domains(
+        &self,
+        content: &str,
+        analysis: &mut SecurityAnalysis,
+    ) -> Result<()> {
         let suspicious_domains = [
-            "bit.ly", "tinyurl.com", "goo.gl", "t.co", // URL shorteners
-            "pastebin.com", "paste.ee", "ghostbin.com", // Paste sites
-            "temp.sh", "0x0.st", "file.io", // Temporary file hosts
-            "discord.gg", "t.me", // Chat platforms (suspicious for downloads)
+            "bit.ly",
+            "tinyurl.com",
+            "goo.gl",
+            "t.co", // URL shorteners
+            "pastebin.com",
+            "paste.ee",
+            "ghostbin.com", // Paste sites
+            "temp.sh",
+            "0x0.st",
+            "file.io", // Temporary file hosts
+            "discord.gg",
+            "t.me", // Chat platforms (suspicious for downloads)
         ];
 
         for domain in &suspicious_domains {
             if content.contains(domain) {
-                analysis.flags.push(SecurityFlag::SuspiciousDomain(domain.to_string()));
+                analysis
+                    .flags
+                    .push(SecurityFlag::SuspiciousDomain(domain.to_string()));
                 analysis.risk_score += 0.5;
             }
         }
@@ -414,16 +474,15 @@ impl SecurityManager {
 
     fn save_trust_database(&self) -> Result<()> {
         let json = serde_json::to_string_pretty(&self.trust_cache)?;
-        fs::write(&self.config.trust_database, json)
-            .context("Failed to save trust database")?;
+        fs::write(&self.config.trust_database, json).context("Failed to save trust database")?;
         Ok(())
     }
 
     pub fn load_trust_database(&mut self) -> Result<()> {
         if self.config.trust_database.exists() {
             let content = fs::read_to_string(&self.config.trust_database)?;
-            self.trust_cache = serde_json::from_str(&content)
-                .context("Failed to parse trust database")?;
+            self.trust_cache =
+                serde_json::from_str(&content).context("Failed to parse trust database")?;
         }
         Ok(())
     }
@@ -504,9 +563,11 @@ mod tests {
     #[test]
     fn test_security_manager_creation() {
         let temp_dir = TempDir::new().unwrap();
-        let mut config = SecurityConfig::default();
-        config.keyring_dir = temp_dir.path().join("keyring");
-        config.trust_database = temp_dir.path().join("trust.db");
+        let config = SecurityConfig {
+            keyring_dir: temp_dir.path().join("keyring"),
+            trust_database: temp_dir.path().join("trust.db"),
+            ..Default::default()
+        };
 
         let security_manager = SecurityManager::new(config);
         assert!(security_manager.is_ok());
@@ -515,8 +576,10 @@ mod tests {
     #[test]
     fn test_pkgbuild_scanning() {
         let temp_dir = TempDir::new().unwrap();
-        let mut config = SecurityConfig::default();
-        config.keyring_dir = temp_dir.path().join("keyring");
+        let config = SecurityConfig {
+            keyring_dir: temp_dir.path().join("keyring"),
+            ..Default::default()
+        };
 
         let security_manager = SecurityManager::new(config).unwrap();
 
@@ -540,8 +603,10 @@ mod tests {
     #[test]
     fn test_trust_badge_calculation() {
         let temp_dir = TempDir::new().unwrap();
-        let mut config = SecurityConfig::default();
-        config.keyring_dir = temp_dir.path().join("keyring");
+        let config = SecurityConfig {
+            keyring_dir: temp_dir.path().join("keyring"),
+            ..Default::default()
+        };
 
         let security_manager = SecurityManager::new(config).unwrap();
 

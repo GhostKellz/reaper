@@ -1,7 +1,7 @@
-// Core feature tests for Reap v0.3.0-rc
+// Core feature tests for Reap v0.8.0
 use anyhow::{Context, Result};
 use reap::config::GlobalConfig;
-use reap::flatpak::install_flatpak;
+use reap::flatpak;
 use reap::utils;
 use std::fs;
 
@@ -67,9 +67,14 @@ fn test_hook_invocation() -> Result<()> {
 }
 
 /// Test Flatpak installation failure by attempting to install a non-existent Flatpak package.
-#[tokio::test]
-async fn test_flatpak_install_failure() -> Result<()> {
-    let result = install_flatpak("nonexistent.flatpak.app").await;
+#[test]
+fn test_flatpak_install_failure() -> Result<()> {
+    // Skip if flatpak is not installed
+    if !flatpak::is_available() {
+        println!("Skipping test: Flatpak not installed");
+        return Ok(());
+    }
+    let result = flatpak::install("nonexistent.flatpak.app.does.not.exist");
     assert!(result.is_err());
     Ok(())
 }

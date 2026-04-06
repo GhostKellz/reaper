@@ -1,6 +1,6 @@
 #!/bin/bash
-# Reaper v0.6.0 Installation Script
-# Universal installer for Arch-based systems with comprehensive error handling
+# Reaper Installation Script
+# Universal installer for Arch-based systems
 
 set -euo pipefail
 
@@ -11,7 +11,7 @@ REPO_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}"
 INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="${HOME}/.config/reap"
 BINARY_NAME="reap"
-VERSION="v0.6.0"
+VERSION="v0.8.0"
 
 # Colors
 readonly RED='\033[0;31m'
@@ -330,7 +330,7 @@ setup_config() {
     # Create main config if it doesn't exist
     if [[ ! -f "${CONFIG_DIR}/reap.toml" ]]; then
         cat > "${CONFIG_DIR}/reap.toml" << 'EOF'
-# Reaper Configuration v0.6.0
+# Reaper Configuration
 backend_order = ["tap", "aur", "pacman", "flatpak"]
 auto_resolve_deps = true
 noconfirm = false

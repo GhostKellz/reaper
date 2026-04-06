@@ -1,4 +1,4 @@
-# 📦 Publishing Secure Tap Packages with Reaper
+# Tap Publishing
 
 This guide walks you through securely publishing tap packages for Reaper with GPG signature verification.
 
@@ -52,4 +52,6 @@ Add `PKGBUILD`, `PKGBUILD.sig`, and `publisher.toml` to your tap repo and push.
 
 ---
 
-For more details, see [README.md](README.md) and [DOCS.md](DOCS.md).
+See also:
+- [GPG Verification](../security/gpg-verification.md)
+- [Commands](./commands.md)

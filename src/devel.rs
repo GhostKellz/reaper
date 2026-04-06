@@ -1,11 +1,10 @@
+use anyhow::{Result, anyhow};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use serde::{Deserialize, Serialize};
-use anyhow::{anyhow, Result};
-use chrono::{DateTime, Utc};
-use dirs::cache_dir;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DevelInfo {
@@ -67,10 +66,7 @@ pub struct DevelManager {
 
 impl DevelManager {
     pub fn new() -> Result<Self> {
-        let cache_dir = cache_dir()
-            .ok_or_else(|| anyhow!("Cannot determine cache directory"))?
-            .join("reap")
-            .join("devel");
+        let cache_dir = crate::paths::devel_dir();
 
         fs::create_dir_all(&cache_dir)?;
 
@@ -164,9 +160,7 @@ impl DevelManager {
         let now = Utc::now();
 
         for (name, pkg) in &info.packages {
-            let hours_since_check = now
-                .signed_duration_since(pkg.last_checked)
-                .num_hours() as u64;
+            let hours_since_check = now.signed_duration_since(pkg.last_checked).num_hours() as u64;
 
             if hours_since_check > max_age_hours {
                 outdated.push(name.clone());
@@ -188,7 +182,10 @@ impl DevelManager {
             self.save_devel_info(&info)?;
             println!("[devel] Removed {} from development package tracking", name);
         } else {
-            return Err(anyhow!("Package {} not found in development tracking", name));
+            return Err(anyhow!(
+                "Package {} not found in development tracking",
+                name
+            ));
         }
 
         Ok(())
@@ -205,17 +202,18 @@ impl DevelManager {
         // Look for source array in PKGBUILD
         for line in content.lines() {
             let line = line.trim();
-            if line.starts_with("source") && line.contains('=') {
-                if let Some(sources_part) = line.split('=').nth(1) {
-                    // Extract URLs from source array
-                    let sources = sources_part.trim_matches(&['(', ')', '"', '\'']).trim();
-                    for source in sources.split_whitespace() {
-                        let source = source.trim_matches(&['"', '\'']);
-                        if self.is_vcs_url(source) {
-                            let vcs_type = VcsType::from_url(source);
-                            if vcs_type != VcsType::Unknown {
-                                return Ok(Some((vcs_type, source.to_string())));
-                            }
+            if line.starts_with("source")
+                && line.contains('=')
+                && let Some(sources_part) = line.split('=').nth(1)
+            {
+                // Extract URLs from source array
+                let sources = sources_part.trim_matches(['(', ')', '"', '\'']).trim();
+                for source in sources.split_whitespace() {
+                    let source = source.trim_matches(['"', '\'']);
+                    if self.is_vcs_url(source) {
+                        let vcs_type = VcsType::from_url(source);
+                        if vcs_type != VcsType::Unknown {
+                            return Ok(Some((vcs_type, source.to_string())));
                         }
                     }
                 }
@@ -226,18 +224,18 @@ impl DevelManager {
     }
 
     fn is_vcs_url(&self, url: &str) -> bool {
-        url.starts_with("git://") ||
-        url.starts_with("git+") ||
-        url.starts_with("svn://") ||
-        url.starts_with("hg+") ||
-        url.starts_with("bzr+") ||
-        url.contains(".git") ||
-        url.contains("github.com") ||
-        url.contains("gitlab.com") ||
-        url.contains("bitbucket.org")
+        url.starts_with("git://")
+            || url.starts_with("git+")
+            || url.starts_with("svn://")
+            || url.starts_with("hg+")
+            || url.starts_with("bzr+")
+            || url.contains(".git")
+            || url.contains("github.com")
+            || url.contains("gitlab.com")
+            || url.contains("bitbucket.org")
     }
 
-    fn check_package_update(&self, pkg: &mut DevelPackage) -> Result<bool> {
+    pub fn check_package_update(&self, pkg: &mut DevelPackage) -> Result<bool> {
         match pkg.vcs_type {
             VcsType::Git => self.check_git_update(pkg),
             VcsType::Svn => self.check_svn_update(pkg),
@@ -251,7 +249,28 @@ impl DevelManager {
     }
 
     fn check_git_update(&self, pkg: &mut DevelPackage) -> Result<bool> {
-        // Clone or update the repository
+        // First, try to check remote ref without cloning (fast path)
+        if let Some(remote_commit) = self.get_git_remote_ref(&pkg.url)? {
+            if let Some(ref local_commit) = pkg.current_commit {
+                if local_commit != &remote_commit {
+                    println!(
+                        "[devel] {} has new commits: {} -> {}",
+                        pkg.name,
+                        &local_commit[..8.min(local_commit.len())],
+                        &remote_commit[..8.min(remote_commit.len())]
+                    );
+                    pkg.current_commit = Some(remote_commit);
+                    return Ok(true);
+                }
+                return Ok(false);
+            } else {
+                // First time tracking - store current remote ref
+                pkg.current_commit = Some(remote_commit);
+                return Ok(false);
+            }
+        }
+
+        // Fallback: clone/fetch if ls-remote fails (e.g., auth required)
         if !pkg.build_dir.join(".git").exists() {
             println!("[devel] Cloning {} repository", pkg.name);
             let output = Command::new("git")
@@ -260,8 +279,10 @@ impl DevelManager {
                 .output()?;
 
             if !output.status.success() {
-                return Err(anyhow!("Failed to clone repository: {}",
-                    String::from_utf8_lossy(&output.stderr)));
+                return Err(anyhow!(
+                    "Failed to clone repository: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
         } else {
             // Fetch latest changes
@@ -271,8 +292,10 @@ impl DevelManager {
                 .output()?;
 
             if !output.status.success() {
-                return Err(anyhow!("Failed to fetch repository: {}",
-                    String::from_utf8_lossy(&output.stderr)));
+                return Err(anyhow!(
+                    "Failed to fetch repository: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
         }
 
@@ -298,27 +321,157 @@ impl DevelManager {
         Ok(has_update)
     }
 
+    /// Get remote HEAD ref without cloning using git ls-remote
+    fn get_git_remote_ref(&self, url: &str) -> Result<Option<String>> {
+        let output = Command::new("git")
+            .args(["ls-remote", "--heads", "--refs", url, "HEAD"])
+            .output();
+
+        match output {
+            Ok(out) if out.status.success() => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                // Format: <hash>\t<ref>
+                if let Some(line) = stdout.lines().next()
+                    && let Some(hash) = line.split_whitespace().next()
+                {
+                    return Ok(Some(hash.to_string()));
+                }
+                // Try without HEAD filter for repos that don't advertise HEAD
+                let output2 = Command::new("git").args(["ls-remote", url]).output()?;
+                if output2.status.success() {
+                    let stdout2 = String::from_utf8_lossy(&output2.stdout);
+                    // Look for refs/heads/main or refs/heads/master
+                    for line in stdout2.lines() {
+                        if (line.contains("refs/heads/main") || line.contains("refs/heads/master"))
+                            && let Some(hash) = line.split_whitespace().next()
+                        {
+                            return Ok(Some(hash.to_string()));
+                        }
+                    }
+                    // Fallback to first ref
+                    if let Some(line) = stdout2.lines().next()
+                        && let Some(hash) = line.split_whitespace().next()
+                    {
+                        return Ok(Some(hash.to_string()));
+                    }
+                }
+                Ok(None)
+            }
+            _ => Ok(None), // ls-remote failed, caller should use fallback
+        }
+    }
+
     fn check_svn_update(&self, pkg: &mut DevelPackage) -> Result<bool> {
-        // SVN implementation - placeholder
-        println!("[devel] SVN update check for {} not fully implemented", pkg.name);
-        Ok(false)
+        // Get remote revision using svn info
+        let output = Command::new("svn")
+            .args(["info", "--show-item", "revision", &pkg.url])
+            .output();
+
+        match output {
+            Ok(out) if out.status.success() => {
+                let remote_rev = String::from_utf8_lossy(&out.stdout).trim().to_string();
+
+                if let Some(ref local_rev) = pkg.current_commit {
+                    if local_rev != &remote_rev {
+                        println!(
+                            "[devel] {} has new SVN revision: {} -> {}",
+                            pkg.name, local_rev, remote_rev
+                        );
+                        pkg.current_commit = Some(remote_rev);
+                        return Ok(true);
+                    }
+                    Ok(false)
+                } else {
+                    // First time tracking
+                    pkg.current_commit = Some(remote_rev);
+                    Ok(false)
+                }
+            }
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                Err(anyhow!("SVN info failed for {}: {}", pkg.name, stderr))
+            }
+            Err(e) => Err(anyhow!("Failed to run svn: {}", e)),
+        }
     }
 
     fn check_hg_update(&self, pkg: &mut DevelPackage) -> Result<bool> {
-        // Mercurial implementation - placeholder
-        println!("[devel] Mercurial update check for {} not fully implemented", pkg.name);
-        Ok(false)
+        // Get remote tip using hg identify
+        let output = Command::new("hg")
+            .args(["identify", "--id", "--rev", "tip", &pkg.url])
+            .output();
+
+        match output {
+            Ok(out) if out.status.success() => {
+                let remote_id = String::from_utf8_lossy(&out.stdout).trim().to_string();
+
+                if let Some(ref local_id) = pkg.current_commit {
+                    if local_id != &remote_id {
+                        println!(
+                            "[devel] {} has new Mercurial changeset: {} -> {}",
+                            pkg.name, local_id, remote_id
+                        );
+                        pkg.current_commit = Some(remote_id);
+                        return Ok(true);
+                    }
+                    Ok(false)
+                } else {
+                    // First time tracking
+                    pkg.current_commit = Some(remote_id);
+                    Ok(false)
+                }
+            }
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                Err(anyhow!(
+                    "Mercurial identify failed for {}: {}",
+                    pkg.name,
+                    stderr
+                ))
+            }
+            Err(e) => Err(anyhow!("Failed to run hg: {}", e)),
+        }
     }
 
     fn check_bzr_update(&self, pkg: &mut DevelPackage) -> Result<bool> {
-        // Bazaar implementation - placeholder
-        println!("[devel] Bazaar update check for {} not fully implemented", pkg.name);
-        Ok(false)
+        // Get remote revision using bzr revno
+        let output = Command::new("bzr").args(["revno", &pkg.url]).output();
+
+        match output {
+            Ok(out) if out.status.success() => {
+                let remote_revno = String::from_utf8_lossy(&out.stdout).trim().to_string();
+
+                if let Some(ref local_revno) = pkg.current_commit {
+                    if local_revno != &remote_revno {
+                        println!(
+                            "[devel] {} has new Bazaar revision: {} -> {}",
+                            pkg.name, local_revno, remote_revno
+                        );
+                        pkg.current_commit = Some(remote_revno);
+                        return Ok(true);
+                    }
+                    Ok(false)
+                } else {
+                    // First time tracking
+                    pkg.current_commit = Some(remote_revno);
+                    Ok(false)
+                }
+            }
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                Err(anyhow!("Bazaar revno failed for {}: {}", pkg.name, stderr))
+            }
+            Err(e) => Err(anyhow!("Failed to run bzr: {}", e)),
+        }
     }
 }
 
 // Helper function to fetch development package info during installation
-pub fn fetch_devel_info(package_name: &str, pkgbuild_path: &Path, install_version: &str) -> Result<()> {
+pub fn fetch_devel_info(
+    package_name: &str,
+    pkgbuild_path: &Path,
+    install_version: &str,
+) -> Result<()> {
     let mut devel_manager = DevelManager::new()?;
     devel_manager.add_devel_package(package_name, pkgbuild_path, install_version)
 }
@@ -341,6 +494,85 @@ pub fn is_devel_package(pkgbuild_path: &Path) -> Result<bool> {
     Ok(devel_manager.extract_vcs_info(pkgbuild_path)?.is_some())
 }
 
+/// Check if a package name indicates it's a development package
+/// Common suffixes: -git, -svn, -hg, -bzr, -cvs, -darcs
+pub fn is_devel_package_name(name: &str) -> bool {
+    let devel_suffixes = ["-git", "-svn", "-hg", "-bzr", "-cvs", "-darcs"];
+    devel_suffixes.iter().any(|suffix| name.ends_with(suffix))
+}
+
+/// Check for updates on a single tracked devel package
+pub fn check_single_package_update(name: &str) -> Result<Option<String>> {
+    let manager = DevelManager::new()?;
+    let mut info = manager.load_devel_info()?;
+
+    let result = if let Some(pkg) = info.packages.get_mut(name) {
+        let has_update = manager.check_package_update(pkg)?;
+        pkg.last_checked = Utc::now();
+        if has_update {
+            pkg.current_commit.clone()
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    manager.save_devel_info(&info)?;
+    Ok(result)
+}
+
+/// Get all tracked devel packages that have updates available
+pub fn get_all_devel_updates() -> Result<Vec<(String, String)>> {
+    let manager = DevelManager::new()?;
+    let mut info = manager.load_devel_info()?;
+    let mut updates = Vec::new();
+
+    for (name, pkg) in info.packages.iter_mut() {
+        match manager.check_package_update(pkg) {
+            Ok(true) => {
+                if let Some(ref commit) = pkg.current_commit {
+                    updates.push((name.clone(), commit.clone()));
+                }
+            }
+            Ok(false) => {}
+            Err(e) => {
+                eprintln!("[devel] Failed to check {}: {}", name, e);
+            }
+        }
+        pkg.last_checked = Utc::now();
+    }
+
+    info.last_update = Utc::now();
+    manager.save_devel_info(&info)?;
+
+    Ok(updates)
+}
+
+/// Parse VCS sources from PKGBUILD content (for external use)
+pub fn parse_vcs_sources(pkgbuild_content: &str) -> Vec<(VcsType, String)> {
+    let mut sources = Vec::new();
+
+    for line in pkgbuild_content.lines() {
+        let line = line.trim();
+        if line.starts_with("source")
+            && line.contains('=')
+            && let Some(sources_part) = line.split('=').nth(1)
+        {
+            let sources_str = sources_part.trim_matches(['(', ')', '"', '\'']).trim();
+            for source in sources_str.split_whitespace() {
+                let source = source.trim_matches(['"', '\'']);
+                let vcs_type = VcsType::from_url(source);
+                if vcs_type != VcsType::Unknown {
+                    sources.push((vcs_type, source.to_string()));
+                }
+            }
+        }
+    }
+
+    sources
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,21 +580,96 @@ mod tests {
 
     #[test]
     fn test_vcs_type_detection() {
-        assert_eq!(VcsType::from_url("git://github.com/user/repo.git"), VcsType::Git);
-        assert_eq!(VcsType::from_url("https://github.com/user/repo.git"), VcsType::Git);
-        assert_eq!(VcsType::from_url("git+https://github.com/user/repo.git"), VcsType::Git);
-        assert_eq!(VcsType::from_url("svn://svn.example.com/repo"), VcsType::Svn);
-        assert_eq!(VcsType::from_url("hg+https://hg.example.com/repo"), VcsType::Hg);
+        assert_eq!(
+            VcsType::from_url("git://github.com/user/repo.git"),
+            VcsType::Git
+        );
+        assert_eq!(
+            VcsType::from_url("https://github.com/user/repo.git"),
+            VcsType::Git
+        );
+        assert_eq!(
+            VcsType::from_url("git+https://github.com/user/repo.git"),
+            VcsType::Git
+        );
+        assert_eq!(
+            VcsType::from_url("svn://svn.example.com/repo"),
+            VcsType::Svn
+        );
+        assert_eq!(
+            VcsType::from_url("hg+https://hg.example.com/repo"),
+            VcsType::Hg
+        );
         assert_eq!(VcsType::from_url("bzr+lp:project"), VcsType::Bzr);
-        assert_eq!(VcsType::from_url("https://example.com/file.tar.gz"), VcsType::Unknown);
+        assert_eq!(
+            VcsType::from_url("https://example.com/file.tar.gz"),
+            VcsType::Unknown
+        );
     }
 
     #[test]
     fn test_devel_manager_creation() {
         let temp_dir = TempDir::new().unwrap();
-        std::env::set_var("XDG_CACHE_HOME", temp_dir.path());
+        // SAFETY: This test runs single-threaded and the env var is only used
+        // to set up the test environment before DevelManager::new() is called.
+        unsafe {
+            std::env::set_var("XDG_CACHE_HOME", temp_dir.path());
+        }
 
         let manager = DevelManager::new();
         assert!(manager.is_ok());
+    }
+
+    #[test]
+    fn test_is_devel_package_name() {
+        // Should detect -git packages
+        assert!(is_devel_package_name("yay-git"));
+        assert!(is_devel_package_name("neovim-git"));
+        assert!(is_devel_package_name("linux-zen-git"));
+
+        // Should detect other VCS suffixes
+        assert!(is_devel_package_name("project-svn"));
+        assert!(is_devel_package_name("repo-hg"));
+        assert!(is_devel_package_name("code-bzr"));
+        assert!(is_devel_package_name("app-cvs"));
+        assert!(is_devel_package_name("tool-darcs"));
+
+        // Should NOT match regular packages
+        assert!(!is_devel_package_name("firefox"));
+        assert!(!is_devel_package_name("git"));
+        assert!(!is_devel_package_name("github-cli"));
+        assert!(!is_devel_package_name("gitui"));
+    }
+
+    #[test]
+    fn test_parse_vcs_sources() {
+        let pkgbuild = r#"
+pkgname=example-git
+pkgver=1.0.0
+source=("git+https://github.com/user/repo.git")
+sha256sums=('SKIP')
+"#;
+        let sources = parse_vcs_sources(pkgbuild);
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].0, VcsType::Git);
+        assert!(sources[0].1.contains("github.com"));
+
+        // Multiple sources on single line
+        let pkgbuild_multi = r#"
+source=("git+https://github.com/user/repo.git" "svn://svn.example.com/trunk" "https://example.com/patch.tar.gz")
+"#;
+        let sources = parse_vcs_sources(pkgbuild_multi);
+        assert_eq!(sources.len(), 2); // tar.gz is not VCS
+        assert_eq!(sources[0].0, VcsType::Git);
+        assert_eq!(sources[1].0, VcsType::Svn);
+    }
+
+    #[test]
+    fn test_vcs_command() {
+        assert_eq!(VcsType::Git.command(), "git");
+        assert_eq!(VcsType::Svn.command(), "svn");
+        assert_eq!(VcsType::Hg.command(), "hg");
+        assert_eq!(VcsType::Bzr.command(), "bzr");
+        assert_eq!(VcsType::Unknown.command(), "");
     }
 }

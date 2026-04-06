@@ -1,4 +1,4 @@
-# 🏗️ Reaper Architecture
+# Architecture
 
 Reaper is built on a modular architecture that emphasizes security, performance, and user experience.
 
@@ -65,6 +65,12 @@ Reaper is built on a modular architecture that emphasizes security, performance,
 - **Pacman Backend** (`src/pacman.rs`): System package management
 - **Tap Backend** (`src/tap.rs`): Custom repository support
 
+### Transaction & Rollback System (`src/transaction.rs`)
+- Transaction recording for all package operations
+- Artifact-backed rollback using cached packages
+- Dependency analysis for safe rollback planning
+- Journal storage with eligibility tracking
+
 ### Support Systems
 - **Configuration** (`src/config.rs`): Global and profile-specific settings
 - **GPG Verification** (`src/gpg.rs`): Package signature validation
@@ -89,9 +95,16 @@ Score Calculation → Badge Assignment → Cache Storage
 
 ### Profile-Aware Operation Flow
 ```
-Operation Start → Load Active Profile → Apply Profile Settings → 
-Backend Prioritization → Security Policy → Performance Tuning → 
+Operation Start → Load Active Profile → Apply Profile Settings →
+Backend Prioritization → Security Policy → Performance Tuning →
 Operation Execution → Profile-Specific Logging
+```
+
+### Rollback Flow
+```
+List Transactions → Select Transaction → Create Rollback Plan →
+Analyze Dependencies → Show Warnings → User Confirmation →
+Execute Rollback (pacman -U/-R) → Verify Results → Update Journal
 ```
 
 ## 🔧 Key Interfaces

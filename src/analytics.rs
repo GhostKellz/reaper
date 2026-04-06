@@ -53,9 +53,7 @@ pub struct PerformanceAnalyzer {
 
 impl PerformanceAnalyzer {
     pub fn new() -> Self {
-        let metrics_dir = dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("/tmp"))
-            .join("reap/metrics");
+        let metrics_dir = crate::paths::metrics_dir();
         let _ = fs::create_dir_all(&metrics_dir);
 
         Self {
@@ -94,22 +92,6 @@ impl PerformanceAnalyzer {
 
         self.current_builds
             .insert(build_id.clone(), (Instant::now(), metrics));
-
-        // Start system monitoring in a separate task
-        let build_id_clone = build_id.clone();
-        tokio::spawn(async move {
-            let _max_cpu = 0.0f32;
-            let _max_memory = 0u64;
-
-            // Simple monitoring loop - in production would use proper system monitoring
-            for _i in 0..10 {
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                // Get system stats here if needed
-            }
-
-            // Update metrics with resource usage would happen here
-            println!("[analytics] Monitoring completed for {}", build_id_clone);
-        });
 
         build_id
     }

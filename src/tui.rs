@@ -93,7 +93,7 @@ impl SearchTab {
                 }
             }
             SearchSource::Flatpak => {
-                self.results = crate::flatpak::search(&self.query);
+                self.results = crate::flatpak::search(&self.query).unwrap_or_default();
             }
             SearchSource::Pacman | SearchSource::ChaoticAur | SearchSource::GhostctlAur => {
                 let repo = match self.source {
@@ -223,10 +223,10 @@ impl InstallQueue {
                             Ok(_) | Err(_) => log_pane_task.push("[tui] Pacman install failed."),
                         }
                     }
-                    "flatpak" => {
-                        crate::flatpak::install(&task.pkg);
-                        log_pane_task.push("[tui] Flatpak install attempted.");
-                    }
+                    "flatpak" => match crate::flatpak::install(&task.pkg) {
+                        Ok(()) => log_pane_task.push("[tui] Flatpak install succeeded."),
+                        Err(_) => log_pane_task.push("[tui] Flatpak install failed."),
+                    },
                     _ => {
                         log_pane_task.push("[tui] Unknown backend.");
                     }
@@ -364,7 +364,7 @@ pub async fn launch_tui() {
     loop {
         terminal
             .draw(|f| {
-                let size = f.size();
+                let size = f.area();
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
@@ -387,7 +387,7 @@ pub async fn launch_tui() {
                     };
                     format!("{}{}", icon, title)
                 }))
-                .block(Block::default().borders(Borders::ALL).title("Reaper v0.6"))
+                .block(Block::default().borders(Borders::ALL).title("Reaper v0.8"))
                 .select(tab_idx)
                 .highlight_style(
                     Style::default()
@@ -428,91 +428,88 @@ pub async fn launch_tui() {
                 render_status_bar(f, chunks[3], &profile_manager);
 
                 if let Some(diff) = &diff_viewer {
-                    let area = Layout::default().split(f.size())[0];
+                    let area = Layout::default().split(f.area())[0];
                     diff.render(f, area);
                 }
             })
             .unwrap();
 
-        if crossterm::event::poll(std::time::Duration::from_millis(100)).unwrap() {
-            if let Event::Key(key) = event::read().unwrap() {
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => break,
-                    KeyCode::Char('/') => {
-                        // Enter search mode
-                        if tab_idx == 0 {
-                            log_pane.push("[tui] Search mode activated");
-                        }
+        if crossterm::event::poll(std::time::Duration::from_millis(100)).unwrap()
+            && let Event::Key(key) = event::read().unwrap()
+        {
+            match key.code {
+                KeyCode::Char('q') | KeyCode::Esc => break,
+                KeyCode::Char('/') => {
+                    // Enter search mode
+                    if tab_idx == 0 {
+                        log_pane.push("[tui] Search mode activated");
                     }
-                    KeyCode::Char('d') => {
-                        // Show diff for selected package
-                        if tab_idx == 0 && !search_tab.results.is_empty() {
-                            let selected_pkg = &search_tab.results[search_tab.selected];
-                            let old = "";
-                            let new = crate::aur::get_pkgbuild_preview(&selected_pkg.name);
-                            diff_viewer = Some(DiffViewer::new(old, &new));
-                        }
+                }
+                KeyCode::Char('d') => {
+                    // Show diff for selected package
+                    if tab_idx == 0 && !search_tab.results.is_empty() {
+                        let selected_pkg = &search_tab.results[search_tab.selected];
+                        let old = "";
+                        let new = crate::aur::get_pkgbuild_preview(&selected_pkg.name);
+                        diff_viewer = Some(DiffViewer::new(old, &new));
                     }
-                    KeyCode::Char('t') => {
-                        // Show trust details for selected package
-                        if tab_idx == 0 && !search_tab.results.is_empty() {
-                            let selected_pkg = &search_tab.results[search_tab.selected];
-                            if let Some(trust) = search_tab.trust_scores.get(&selected_pkg.name) {
-                                log_pane.push(&format!(
-                                    "[trust] {}: Score {:.1}/10",
-                                    selected_pkg.name, trust.overall_score
-                                ));
-                                for flag in &trust.security_flags {
-                                    log_pane.push(&format!("[trust] ⚠️ {:?}", flag));
-                                }
+                }
+                KeyCode::Char('t') => {
+                    // Show trust details for selected package
+                    if tab_idx == 0 && !search_tab.results.is_empty() {
+                        let selected_pkg = &search_tab.results[search_tab.selected];
+                        if let Some(trust) = search_tab.trust_scores.get(&selected_pkg.name) {
+                            log_pane.push(&format!(
+                                "[trust] {}: Score {:.1}/10",
+                                selected_pkg.name, trust.overall_score
+                            ));
+                            for flag in &trust.security_flags {
+                                log_pane.push(&format!("[trust] ⚠️ {:?}", flag));
                             }
                         }
                     }
-                    KeyCode::Char('p') => {
-                        // Switch to profiles tab
-                        tab_idx = 3;
-                    }
-                    KeyCode::Char('c') | KeyCode::Char('C') => {
-                        log_pane.clear();
-                    }
-                    KeyCode::Char('\t') => {
-                        tab_idx = (tab_idx + 1) % tab_titles.len();
-                    }
-                    KeyCode::Char(c) => {
-                        if tab_idx == 0 {
-                            search_tab.query.push(c);
-                        }
-                    }
-                    KeyCode::Up => {
-                        if tab_idx == 0 && search_tab.selected > 0 {
-                            search_tab.selected -= 1;
-                        } else if tab_idx == 2 && log_scroll > 0 {
-                            log_scroll -= 1;
-                        }
-                    }
-                    KeyCode::Down => {
-                        if tab_idx == 0
-                            && search_tab.selected < search_tab.results.len().saturating_sub(1)
-                        {
-                            search_tab.selected += 1;
-                        } else if tab_idx == 2 {
-                            log_scroll += 1;
-                        }
-                    }
-                    KeyCode::Enter => {
-                        if tab_idx == 0 && !search_tab.results.is_empty() {
-                            let selected = &search_tab.results[search_tab.selected];
-                            let task = core::InstallTask::new(
-                                selected.name.clone(),
-                                selected.source.clone(),
-                            );
-                            install_queue.enqueue(task);
-                            log_pane
-                                .push(&format!("[queue] Added {} to install queue", selected.name));
-                        }
-                    }
-                    _ => {}
                 }
+                KeyCode::Char('p') => {
+                    // Switch to profiles tab
+                    tab_idx = 3;
+                }
+                KeyCode::Char('c') | KeyCode::Char('C') => {
+                    log_pane.clear();
+                }
+                KeyCode::Char('\t') => {
+                    tab_idx = (tab_idx + 1) % tab_titles.len();
+                }
+                KeyCode::Char(c) => {
+                    if tab_idx == 0 {
+                        search_tab.query.push(c);
+                    }
+                }
+                KeyCode::Up => {
+                    if tab_idx == 0 && search_tab.selected > 0 {
+                        search_tab.selected -= 1;
+                    } else if tab_idx == 2 && log_scroll > 0 {
+                        log_scroll -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    if tab_idx == 0
+                        && search_tab.selected < search_tab.results.len().saturating_sub(1)
+                    {
+                        search_tab.selected += 1;
+                    } else if tab_idx == 2 {
+                        log_scroll += 1;
+                    }
+                }
+                KeyCode::Enter => {
+                    if tab_idx == 0 && !search_tab.results.is_empty() {
+                        let selected = &search_tab.results[search_tab.selected];
+                        let task =
+                            core::InstallTask::new(selected.name.clone(), selected.source.clone());
+                        install_queue.enqueue(task);
+                        log_pane.push(&format!("[queue] Added {} to install queue", selected.name));
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -788,9 +785,9 @@ fn render_bottom_panel_fixed(
         Paragraph::new(system_info).block(Block::default().borders(Borders::ALL).title("System"));
     f.render_widget(info_paragraph, chunks[0]);
 
-    // Trust summary (placeholder - implement actual trust stats in the future)
-    let trust_summary = "🛡️ Trusted: 45\n⚠️ Caution: 12\n❌ Risky: 2";
-    let trust_paragraph = Paragraph::new(trust_summary)
+    // Security guidance - directs users to CLI trust commands
+    let security_info = "Use CLI for trust analysis:\n  reap trust stats\n  reap trust scan\n  reap security scan-all";
+    let trust_paragraph = Paragraph::new(security_info)
         .block(Block::default().borders(Borders::ALL).title("Security"));
     f.render_widget(trust_paragraph, chunks[1]);
 

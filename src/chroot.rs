@@ -1,9 +1,9 @@
+use crate::config::Config;
+use anyhow::{Context, Result, anyhow};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use anyhow::{anyhow, Context, Result};
-use serde::{Deserialize, Serialize};
-use crate::config::ReapConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChrootConfig {
@@ -27,7 +27,7 @@ pub struct ChrootManager {
 }
 
 impl ChrootManager {
-    pub fn new(config: &ReapConfig) -> Result<Self> {
+    pub fn new(config: &Config) -> Result<Self> {
         let chroot_id = format!("reap-{}", std::process::id());
 
         let chroot_config = ChrootConfig {
@@ -78,7 +78,10 @@ impl ChrootManager {
     }
 
     pub fn build_package(&self, pkgbuild_dir: &Path, package_name: &str) -> Result<Vec<PathBuf>> {
-        println!("[chroot] 🔨 Building {} in isolated environment", package_name);
+        println!(
+            "[chroot] 🔨 Building {} in isolated environment",
+            package_name
+        );
 
         // Copy PKGBUILD and sources into chroot
         let chroot_build_dir = self.config.root_dir.join("build").join(package_name);
@@ -107,9 +110,12 @@ impl ChrootManager {
 
         // Remove chroot directory
         if self.config.root_dir.exists() {
-            fs::remove_dir_all(&self.config.root_dir)
-                .with_context(|| format!("Failed to remove chroot directory: {}",
-                    self.config.root_dir.display()))?;
+            fs::remove_dir_all(&self.config.root_dir).with_context(|| {
+                format!(
+                    "Failed to remove chroot directory: {}",
+                    self.config.root_dir.display()
+                )
+            })?;
         }
 
         println!("[chroot] ✅ Cleanup complete");
@@ -118,9 +124,8 @@ impl ChrootManager {
 
     fn create_directory_structure(&self) -> Result<()> {
         let dirs = [
-            "bin", "boot", "dev", "etc", "home", "lib", "lib64", "mnt",
-            "opt", "proc", "root", "run", "sbin", "srv", "sys", "tmp",
-            "usr", "var", "build",
+            "bin", "boot", "dev", "etc", "home", "lib", "lib64", "mnt", "opt", "proc", "root",
+            "run", "sbin", "srv", "sys", "tmp", "usr", "var", "build",
         ];
 
         for dir in &dirs {
@@ -131,9 +136,14 @@ impl ChrootManager {
 
         // Create essential subdirectories
         let subdirs = [
-            "usr/bin", "usr/lib", "usr/share", "usr/include",
-            "var/cache/pacman/pkg", "var/lib/pacman",
-            "etc/pacman.d", "home/builder",
+            "usr/bin",
+            "usr/lib",
+            "usr/share",
+            "usr/include",
+            "var/cache/pacman/pkg",
+            "var/lib/pacman",
+            "etc/pacman.d",
+            "home/builder",
         ];
 
         for subdir in &subdirs {
@@ -148,19 +158,19 @@ impl ChrootManager {
     fn install_base_system(&self) -> Result<()> {
         println!("[chroot] Installing base system packages");
 
-        let base_packages = [
-            "base", "base-devel", "git", "sudo",
-        ];
+        let base_packages = ["base", "base-devel", "git", "sudo"];
 
         let output = Command::new("pacstrap")
             .arg(&self.config.root_dir)
-            .args(&base_packages)
+            .args(base_packages)
             .output()
             .context("Failed to execute pacstrap")?;
 
         if !output.status.success() {
-            return Err(anyhow!("Failed to install base system: {}",
-                String::from_utf8_lossy(&output.stderr)));
+            return Err(anyhow!(
+                "Failed to install base system: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
 
         // Create builder user
@@ -187,8 +197,10 @@ impl ChrootManager {
                 .context("Failed to execute arch-chroot")?;
 
             if !output.status.success() {
-                return Err(anyhow!("Failed to create builder user: {}",
-                    String::from_utf8_lossy(&output.stderr)));
+                return Err(anyhow!(
+                    "Failed to create builder user: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
         }
 
@@ -220,22 +232,21 @@ impl ChrootManager {
 
             // Perform bind mount
             let mut cmd = Command::new("mount");
-            cmd.arg("--bind")
-                .arg(&mount.source)
-                .arg(&target_path);
+            cmd.arg("--bind").arg(&mount.source).arg(&target_path);
 
             if mount.read_only {
                 cmd.arg("-o").arg("ro");
             }
 
-            let output = cmd.output()
-                .context("Failed to execute mount")?;
+            let output = cmd.output().context("Failed to execute mount")?;
 
             if !output.status.success() {
-                return Err(anyhow!("Failed to bind mount {} to {}: {}",
+                return Err(anyhow!(
+                    "Failed to bind mount {} to {}: {}",
                     mount.source.display(),
                     target_path.display(),
-                    String::from_utf8_lossy(&output.stderr)));
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
         }
 
@@ -258,7 +269,8 @@ impl ChrootManager {
         // Copy other configuration files
         for file in &self.config.copy_files {
             if file.exists() {
-                let file_name = file.file_name()
+                let file_name = file
+                    .file_name()
                     .ok_or_else(|| anyhow!("Invalid file name: {}", file.display()))?;
                 let target_file = self.config.root_dir.join("etc").join(file_name);
 
@@ -281,8 +293,10 @@ impl ChrootManager {
             .context("Failed to copy sources")?;
 
         if !output.status.success() {
-            return Err(anyhow!("Failed to copy sources: {}",
-                String::from_utf8_lossy(&output.stderr)));
+            return Err(anyhow!(
+                "Failed to copy sources: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
 
         // Set ownership to builder user
@@ -296,8 +310,10 @@ impl ChrootManager {
             .context("Failed to change ownership")?;
 
         if !output.status.success() {
-            eprintln!("[chroot] Warning: Failed to change ownership: {}",
-                String::from_utf8_lossy(&output.stderr));
+            eprintln!(
+                "[chroot] Warning: Failed to change ownership: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         Ok(())
@@ -315,7 +331,10 @@ impl ChrootManager {
             return Ok(());
         }
 
-        println!("[chroot] Installing dependencies: {}", dependencies.join(", "));
+        println!(
+            "[chroot] Installing dependencies: {}",
+            dependencies.join(", ")
+        );
 
         let output = Command::new("arch-chroot")
             .arg(&self.config.root_dir)
@@ -327,16 +346,18 @@ impl ChrootManager {
             .context("Failed to install build dependencies")?;
 
         if !output.status.success() {
-            return Err(anyhow!("Failed to install build dependencies: {}",
-                String::from_utf8_lossy(&output.stderr)));
+            return Err(anyhow!(
+                "Failed to install build dependencies: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
 
         Ok(())
     }
 
     fn parse_pkgbuild_dependencies(&self, pkgbuild_path: &Path) -> Result<Vec<String>> {
-        let content = fs::read_to_string(pkgbuild_path)
-            .with_context(|| "Failed to read PKGBUILD")?;
+        let content =
+            fs::read_to_string(pkgbuild_path).with_context(|| "Failed to read PKGBUILD")?;
 
         let mut dependencies = Vec::new();
 
@@ -346,12 +367,10 @@ impl ChrootManager {
             if line.starts_with("makedepends=") || line.starts_with("depends=") {
                 // Extract dependencies from array notation
                 if let Some(deps_part) = line.split('=').nth(1) {
-                    let deps_clean = deps_part
-                        .trim_matches(&['(', ')', '"', '\''])
-                        .trim();
+                    let deps_clean = deps_part.trim_matches(['(', ')', '"', '\'']).trim();
 
                     for dep in deps_clean.split_whitespace() {
-                        let dep_clean = dep.trim_matches(&['"', '\'']);
+                        let dep_clean = dep.trim_matches(['"', '\'']);
                         if !dep_clean.is_empty() && !dependencies.contains(&dep_clean.to_string()) {
                             dependencies.push(dep_clean.to_string());
                         }
@@ -375,13 +394,18 @@ impl ChrootManager {
             .arg("builder")
             .arg("bash")
             .arg("-c")
-            .arg(format!("cd {} && makepkg -s --noconfirm", build_path.display()))
+            .arg(format!(
+                "cd {} && makepkg -s --noconfirm",
+                build_path.display()
+            ))
             .output()
             .context("Failed to execute makepkg")?;
 
         if !output.status.success() {
-            return Err(anyhow!("makepkg failed: {}",
-                String::from_utf8_lossy(&output.stderr)));
+            return Err(anyhow!(
+                "makepkg failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
 
         // Find built packages
@@ -389,8 +413,9 @@ impl ChrootManager {
         for entry in fs::read_dir(build_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) == Some("zst") ||
-               path.extension().and_then(|ext| ext.to_str()) == Some("xz") {
+            if path.extension().and_then(|ext| ext.to_str()) == Some("zst")
+                || path.extension().and_then(|ext| ext.to_str()) == Some("xz")
+            {
                 built_packages.push(path);
             }
         }
@@ -404,22 +429,20 @@ impl ChrootManager {
     }
 
     fn extract_built_packages(&self, built_packages: &[PathBuf]) -> Result<Vec<PathBuf>> {
-        let output_dir = dirs::cache_dir()
-            .unwrap_or_else(|| PathBuf::from("/tmp"))
-            .join("reap")
-            .join("built_packages");
+        let output_dir = crate::paths::CACHE_DIR.join("built_packages");
 
         fs::create_dir_all(&output_dir)?;
 
         let mut output_packages = Vec::new();
 
         for package in built_packages {
-            let file_name = package.file_name()
+            let file_name = package
+                .file_name()
                 .ok_or_else(|| anyhow!("Invalid package filename"))?;
             let output_path = output_dir.join(file_name);
 
             fs::copy(package, &output_path)
-                .with_context(|| format!("Failed to copy package to output directory"))?;
+                .with_context(|| "Failed to copy package to output directory".to_string())?;
 
             output_packages.push(output_path);
         }
@@ -431,16 +454,16 @@ impl ChrootManager {
         for mount in &self.config.bind_mounts {
             let target_path = self.config.root_dir.join(&mount.target);
 
-            let output = Command::new("umount")
-                .arg(&target_path)
-                .output();
+            let output = Command::new("umount").arg(&target_path).output();
 
-            if let Ok(output) = output {
-                if !output.status.success() {
-                    eprintln!("[chroot] Warning: Failed to unmount {}: {}",
-                        target_path.display(),
-                        String::from_utf8_lossy(&output.stderr));
-                }
+            if let Ok(output) = output
+                && !output.status.success()
+            {
+                eprintln!(
+                    "[chroot] Warning: Failed to unmount {}: {}",
+                    target_path.display(),
+                    String::from_utf8_lossy(&output.stderr)
+                );
             }
         }
 
@@ -471,7 +494,7 @@ impl Drop for ChrootManager {
 
 // Helper function to build a package in a chroot environment
 pub fn build_package_chroot(
-    config: &ReapConfig,
+    config: &Config,
     pkgbuild_dir: &Path,
     package_name: &str,
 ) -> Result<Vec<PathBuf>> {
@@ -496,7 +519,7 @@ mod tests {
     #[test]
     fn test_chroot_config_creation() {
         let temp_dir = TempDir::new().unwrap();
-        let mut config = ReapConfig::default();
+        let mut config = Config::default();
         config.build.chroot_dir = temp_dir.path().to_path_buf();
         config.build.use_chroot = true;
 
@@ -507,7 +530,7 @@ mod tests {
     #[test]
     fn test_dependency_parsing() {
         let temp_dir = TempDir::new().unwrap();
-        let mut config = ReapConfig::default();
+        let mut config = Config::default();
         config.build.chroot_dir = temp_dir.path().to_path_buf();
 
         let chroot_manager = ChrootManager::new(&config).unwrap();
@@ -522,7 +545,9 @@ mod tests {
         let pkgbuild_path = temp_dir.path().join("PKGBUILD");
         std::fs::write(&pkgbuild_path, pkgbuild_content).unwrap();
 
-        let deps = chroot_manager.parse_pkgbuild_dependencies(&pkgbuild_path).unwrap();
+        let deps = chroot_manager
+            .parse_pkgbuild_dependencies(&pkgbuild_path)
+            .unwrap();
         assert!(deps.contains(&"gcc".to_string()));
         assert!(deps.contains(&"glibc".to_string()));
     }

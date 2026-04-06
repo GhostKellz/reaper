@@ -1,25 +1,23 @@
 # Maintainer: GhostKellz <ckelley@ghostkellz.sh>
 pkgname=reaper
-pkgver=0.5.0
+pkgver=0.8.0
 pkgrel=1
-pkgdesc="Secure, unified Rust-powered meta package manager for Arch Linux"
+pkgdesc="Fast, async AUR helper written in Rust"
 arch=('x86_64' 'aarch64')
 url="https://github.com/GhostKellz/reaper"
 license=('MIT')
-depends=('pacman' 'git' 'base-devel')
+depends=('pacman' 'git')
 optdepends=(
     'flatpak: Flatpak support'
-    'gpg: GPG signature verification'
-    'nano: Default PKGBUILD editor'
-    'vim: Alternative PKGBUILD editor'
+    'gnupg: GPG signature verification'
 )
 makedepends=('rust' 'cargo')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/GhostKellz/reaper/archive/v$pkgver.tar.gz")
-sha256sums=('SKIP')  # Update with actual checksum
+sha256sums=('SKIP')
 
 build() {
     cd "$pkgname-$pkgver"
-    cargo build --release --features cache
+    cargo build --release
 }
 
 check() {
@@ -29,27 +27,14 @@ check() {
 
 package() {
     cd "$pkgname-$pkgver"
-    
+
     # Install binary
     install -Dm755 target/release/reap "$pkgdir/usr/bin/reap"
-    
-    # Install shell completions
-    install -Dm644 "completions/bash/reap" "$pkgdir/usr/share/bash-completion/completions/reap"
-    install -Dm644 "completions/zsh/_reap" "$pkgdir/usr/share/zsh/site-functions/_reap"
-    install -Dm644 "completions/fish/reap.fish" "$pkgdir/usr/share/fish/vendor_completions.d/reap.fish"
-    
+
     # Install documentation
     install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
-    install -Dm644 FEATURES.md "$pkgdir/usr/share/doc/$pkgname/FEATURES.md"
-    install -Dm644 SECURITY.md "$pkgdir/usr/share/doc/$pkgname/SECURITY.md"
-    install -Dm644 COMMANDS.md "$pkgdir/usr/share/doc/$pkgname/COMMANDS.md"
     install -Dm644 CHANGELOG.md "$pkgdir/usr/share/doc/$pkgname/CHANGELOG.md"
-    
+
     # Install license
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-    
-    # Install man page (if available)
-    # install -Dm644 "man/reap.1" "$pkgdir/usr/share/man/man1/reap.1"
 }
-
-# vim:set ts=2 sw=2 et:

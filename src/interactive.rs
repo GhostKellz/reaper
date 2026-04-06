@@ -32,9 +32,7 @@ pub struct InteractiveManager {
 
 impl InteractiveManager {
     pub fn new() -> Self {
-        let cache_dir = dirs::cache_dir()
-            .unwrap_or_else(|| PathBuf::from("/tmp"))
-            .join("reap/ratings");
+        let cache_dir = crate::paths::ratings_dir();
         let _ = fs::create_dir_all(&cache_dir);
 
         Self {
@@ -210,12 +208,12 @@ impl InteractiveManager {
         io::stdout().flush().unwrap();
 
         let mut input = String::new();
-        if io::stdin().read_line(&mut input).is_ok() {
-            if let Ok(choice) = input.trim().parse::<usize>() {
-                if choice > 0 && choice <= items.len() {
-                    return Some(choice - 1);
-                }
-            }
+        if io::stdin().read_line(&mut input).is_ok()
+            && let Ok(choice) = input.trim().parse::<usize>()
+            && choice > 0
+            && choice <= items.len()
+        {
+            return Some(choice - 1);
         }
 
         println!("Invalid selection.");
