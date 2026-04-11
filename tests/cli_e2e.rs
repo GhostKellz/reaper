@@ -40,8 +40,9 @@ fn test_cli_version() {
         stderr
     );
     assert!(
-        stdout.contains("0.8.0"),
-        "Version output should contain 0.8.0, got: {}",
+        stdout.contains(env!("CARGO_PKG_VERSION")),
+        "Version output should contain {}, got: {}",
+        env!("CARGO_PKG_VERSION"),
         stdout
     );
 }
@@ -659,11 +660,7 @@ fn test_cli_rollback_list() {
     let output = format!("{}{}", stdout, stderr);
 
     // List should succeed even when empty
-    assert!(
-        success,
-        "rollback list should succeed. output: {}",
-        output
-    );
+    assert!(success, "rollback list should succeed. output: {}", output);
     assert!(
         output.contains("transaction") || output.contains("Transaction") || output.contains("No "),
         "rollback list should show transactions or empty message. output: {}",
@@ -683,7 +680,9 @@ fn test_cli_rollback_show_missing_txid() {
         output
     );
     assert!(
-        output.contains("not found") || output.contains("Not found") || output.contains("Transaction"),
+        output.contains("not found")
+            || output.contains("Not found")
+            || output.contains("Transaction"),
         "Should indicate transaction not found. output: {}",
         output
     );
@@ -701,7 +700,9 @@ fn test_cli_rollback_dry_run_missing_txid() {
         output
     );
     assert!(
-        output.contains("not found") || output.contains("Not found") || output.contains("Transaction"),
+        output.contains("not found")
+            || output.contains("Not found")
+            || output.contains("Transaction"),
         "Should indicate transaction not found. output: {}",
         output
     );
@@ -719,7 +720,9 @@ fn test_cli_rollback_apply_missing_txid() {
         output
     );
     assert!(
-        output.contains("not found") || output.contains("Not found") || output.contains("Transaction"),
+        output.contains("not found")
+            || output.contains("Not found")
+            || output.contains("Transaction"),
         "Should indicate transaction not found. output: {}",
         output
     );

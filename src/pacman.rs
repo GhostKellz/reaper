@@ -109,9 +109,7 @@ pub fn list_installed_aur() -> Vec<String> {
 
 /// Get packages that depend on the given package (reverse dependencies)
 pub fn get_reverse_depends(pkg: &str) -> Vec<String> {
-    let output = Command::new("pacman")
-        .args(["-Qi", pkg])
-        .output();
+    let output = Command::new("pacman").args(["-Qi", pkg]).output();
 
     if let Ok(out) = output
         && out.status.success()
@@ -123,10 +121,7 @@ pub fn get_reverse_depends(pkg: &str) -> Vec<String> {
                 if deps == "None" {
                     return Vec::new();
                 }
-                return deps
-                    .split_whitespace()
-                    .map(|s| s.to_string())
-                    .collect();
+                return deps.split_whitespace().map(|s| s.to_string()).collect();
             }
         }
     }
@@ -135,9 +130,7 @@ pub fn get_reverse_depends(pkg: &str) -> Vec<String> {
 
 /// Get package dependencies
 pub fn get_depends(pkg: &str) -> Vec<String> {
-    let output = Command::new("pacman")
-        .args(["-Qi", pkg])
-        .output();
+    let output = Command::new("pacman").args(["-Qi", pkg]).output();
 
     if let Ok(out) = output
         && out.status.success()
@@ -149,10 +142,7 @@ pub fn get_depends(pkg: &str) -> Vec<String> {
                 if deps == "None" {
                     return Vec::new();
                 }
-                return deps
-                    .split_whitespace()
-                    .map(|s| s.to_string())
-                    .collect();
+                return deps.split_whitespace().map(|s| s.to_string()).collect();
             }
         }
     }
@@ -161,9 +151,7 @@ pub fn get_depends(pkg: &str) -> Vec<String> {
 
 /// Get what a package provides
 pub fn get_provides(pkg: &str) -> Vec<String> {
-    let output = Command::new("pacman")
-        .args(["-Qi", pkg])
-        .output();
+    let output = Command::new("pacman").args(["-Qi", pkg]).output();
 
     if let Ok(out) = output
         && out.status.success()
@@ -175,10 +163,7 @@ pub fn get_provides(pkg: &str) -> Vec<String> {
                 if provides == "None" {
                     return Vec::new();
                 }
-                return provides
-                    .split_whitespace()
-                    .map(|s| s.to_string())
-                    .collect();
+                return provides.split_whitespace().map(|s| s.to_string()).collect();
             }
         }
     }
@@ -187,9 +172,7 @@ pub fn get_provides(pkg: &str) -> Vec<String> {
 
 /// Get package conflicts
 pub fn get_conflicts(pkg: &str) -> Vec<String> {
-    let output = Command::new("pacman")
-        .args(["-Qi", pkg])
-        .output();
+    let output = Command::new("pacman").args(["-Qi", pkg]).output();
 
     if let Ok(out) = output
         && out.status.success()
@@ -258,9 +241,7 @@ pub fn version_satisfies(version: &str, constraint: &str) -> bool {
 /// Get all installed packages with their versions
 #[allow(dead_code)]
 pub fn list_installed_with_versions() -> Vec<(String, String)> {
-    let output = Command::new("pacman")
-        .args(["-Q"])
-        .output();
+    let output = Command::new("pacman").args(["-Q"]).output();
 
     if let Ok(out) = output
         && out.status.success()

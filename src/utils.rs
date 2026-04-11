@@ -201,7 +201,10 @@ pub fn compare_pkgbuilds(pkg: &str, new_pkgb: &str) {
 pub fn completion(shell: &str) {
     // Shell completion is not yet fully implemented.
     // This stub acknowledges the request but doesn't provide working completions.
-    println!("[reap] Shell completion for '{}' is not yet implemented.", shell);
+    println!(
+        "[reap] Shell completion for '{}' is not yet implemented.",
+        shell
+    );
     println!();
     println!("For now, you can use basic command completion by adding to your shell config:");
     println!();
@@ -216,7 +219,7 @@ pub fn completion(shell: &str) {
 }
 
 pub fn cli_set_keyserver(keyserver: &str) {
-    let config_path = crate::paths::brew_lua();
+    let config_path = crate::paths::reap_lua();
     if let Ok(mut script) = fs::read_to_string(&config_path) {
         if script.contains("keyserver = ") {
             script = script.replace(
@@ -361,7 +364,7 @@ pub fn doctor_report() -> Result<String, String> {
     if !config_dir.exists() {
         issues.push(format!("Missing config dir: {}", config_dir.display()));
     }
-    let required = ["brew.lua", "pinned.toml"];
+    let required = ["reap.lua", "pinned.toml"];
     for f in &required {
         let fpath = config_dir.join(f);
         if !fpath.exists() {

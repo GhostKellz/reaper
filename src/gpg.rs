@@ -252,9 +252,7 @@ pub fn gpg_check(pkgdir: &Path) -> Result<(), String> {
             Ok(())
         }
         VerificationResult::ValidUntrusted { key_id, .. } => {
-            println!(
-                "[reap] gpg :: PKGBUILD signature valid but key not fully trusted"
-            );
+            println!("[reap] gpg :: PKGBUILD signature valid but key not fully trusted");
             if let Some(trust) = get_trust_level(&key_id) {
                 println!("[reap] gpg :: Key {} trust level: {}", key_id, trust);
             }
@@ -285,9 +283,7 @@ pub fn gpg_check(pkgdir: &Path) -> Result<(), String> {
                     match retry {
                         VerificationResult::Valid { .. }
                         | VerificationResult::ValidUntrusted { .. } => {
-                            println!(
-                                "[reap] gpg :: PKGBUILD signature verified after key import"
-                            );
+                            println!("[reap] gpg :: PKGBUILD signature verified after key import");
                             Ok(())
                         }
                         _ => Err(format!(
@@ -312,9 +308,7 @@ pub fn gpg_check(pkgdir: &Path) -> Result<(), String> {
         VerificationResult::NoSignature => {
             Err("[reap] gpg :: PKGBUILD or signature missing".to_string())
         }
-        VerificationResult::Error(e) => {
-            Err(format!("[reap] gpg :: Error: {}", e))
-        }
+        VerificationResult::Error(e) => Err(format!("[reap] gpg :: Error: {}", e)),
     }
 }
 

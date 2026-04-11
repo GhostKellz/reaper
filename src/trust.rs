@@ -359,7 +359,7 @@ impl TrustEngine {
         match trust.publisher_status {
             crate::tap::PublisherStatus::KeyMatches => score += 1.5, // Cryptographic verification
             crate::tap::PublisherStatus::SelfDeclared => score += 0.5, // Some metadata, but unverified
-            crate::tap::PublisherStatus::NotApplicable => {} // No bonus or penalty
+            crate::tap::PublisherStatus::NotApplicable => {}           // No bonus or penalty
             crate::tap::PublisherStatus::Unknown => {} // Already penalized via security flag
         }
 
@@ -468,9 +468,7 @@ impl TrustEngine {
         if score.signature_valid {
             // Check if the publisher key matches (cryptographic trust)
             match score.publisher_status {
-                crate::tap::PublisherStatus::KeyMatches => {
-                    "🔒 VERIFIED".green().to_string()
-                }
+                crate::tap::PublisherStatus::KeyMatches => "🔒 VERIFIED".green().to_string(),
                 _ => "✓ SIGNED".cyan().to_string(),
             }
         } else {
@@ -490,7 +488,9 @@ impl TrustEngine {
     /// Display publisher status as human-readable text
     pub fn display_publisher_status(&self, status: &crate::tap::PublisherStatus) -> String {
         match status {
-            crate::tap::PublisherStatus::KeyMatches => "Verified (key matches signing key)".to_string(),
+            crate::tap::PublisherStatus::KeyMatches => {
+                "Verified (key matches signing key)".to_string()
+            }
             crate::tap::PublisherStatus::SelfDeclared => "Self-declared (not verified)".to_string(),
             crate::tap::PublisherStatus::NotApplicable => "N/A (non-tap source)".to_string(),
             crate::tap::PublisherStatus::Unknown => "Unknown".to_string(),
@@ -752,7 +752,10 @@ mod tests {
             overall_score: 0.0,
         };
         let badge = engine.display_signature_badge(&score);
-        assert!(badge.contains("VERIFIED"), "Should show VERIFIED for valid+KeyMatches");
+        assert!(
+            badge.contains("VERIFIED"),
+            "Should show VERIFIED for valid+KeyMatches"
+        );
     }
 
     #[test]
@@ -771,7 +774,10 @@ mod tests {
             overall_score: 0.0,
         };
         let badge = engine.display_signature_badge(&score);
-        assert!(badge.contains("SIGNED"), "Should show SIGNED for valid signature without KeyMatches");
+        assert!(
+            badge.contains("SIGNED"),
+            "Should show SIGNED for valid signature without KeyMatches"
+        );
     }
 
     #[test]
@@ -790,7 +796,10 @@ mod tests {
             overall_score: 0.0,
         };
         let badge = engine.display_signature_badge(&score);
-        assert!(badge.contains("UNSIGNED"), "Should show UNSIGNED for no signature");
+        assert!(
+            badge.contains("UNSIGNED"),
+            "Should show UNSIGNED for no signature"
+        );
     }
 
     #[test]
@@ -809,7 +818,10 @@ mod tests {
             overall_score: 0.0,
         };
         let badge = engine.display_signature_badge(&score);
-        assert!(badge.contains("INVALID"), "Should show INVALID when UnverifiedSignature flag present");
+        assert!(
+            badge.contains("INVALID"),
+            "Should show INVALID when UnverifiedSignature flag present"
+        );
     }
 
     #[test]

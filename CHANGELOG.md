@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-04-11
+
+### 🐛 Fixed
+- **Install script binary path detection** - now correctly finds binaries in both `target/release/` and `target/x86_64-unknown-linux-gnu/release/`
+- **Legacy naming cleanup** - renamed `brew.lua` to `reap.lua` (leftover from ghostbrew)
+- **Install script config creation** - now creates `pinned.toml` and `reap.lua` so `reap doctor` passes on fresh installs
+
+### 🔧 Changed
+- **Dynamic versioning** - CLI version now uses `env!("CARGO_PKG_VERSION")` instead of hardcoded string
+
 ## [0.8.0] - 2026-04-06
 
 ### 🔄 Added - Transaction Rollback System

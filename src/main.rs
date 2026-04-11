@@ -248,7 +248,8 @@ async fn main() {
                             if !result.packages_failed.is_empty() {
                                 println!(
                                     "{}",
-                                    "Note: System may be in a partially rolled back state.".yellow()
+                                    "Note: System may be in a partially rolled back state."
+                                        .yellow()
                                 );
                                 println!(
                                     "{}",
@@ -328,11 +329,15 @@ async fn main() {
                     let trust_score = trust_engine.compute_trust_score(&pkg, &source).await;
                     let score_badge = trust_engine.display_trust_badge(trust_score.overall_score);
                     let sig_badge = trust_engine.display_signature_badge(&trust_score);
-                    let pub_status = trust_engine.display_publisher_status(&trust_score.publisher_status);
+                    let pub_status =
+                        trust_engine.display_publisher_status(&trust_score.publisher_status);
 
                     println!("[trust] Package: {}", pkg);
                     println!("[trust] Source: {:?}", source);
-                    println!("[trust] Overall: {} (Score: {:.1}/10)", score_badge, trust_score.overall_score);
+                    println!(
+                        "[trust] Overall: {} (Score: {:.1}/10)",
+                        score_badge, trust_score.overall_score
+                    );
                     println!("[trust] Signature: {}", sig_badge);
                     println!("[trust] Publisher: {}", pub_status);
 
@@ -345,7 +350,10 @@ async fn main() {
 
                     // Show cache info
                     if let Some(audit_date) = trust_score.last_audit_date {
-                        println!("[trust] Last checked: {}", audit_date.format("%Y-%m-%d %H:%M UTC"));
+                        println!(
+                            "[trust] Last checked: {}",
+                            audit_date.format("%Y-%m-%d %H:%M UTC")
+                        );
                     }
                 }
                 cli::TrustCmd::Scan => {
@@ -405,8 +413,12 @@ async fn main() {
                     // Advisory notice
                     println!();
                     println!("⚠️  Note: Trust scores are advisory only.");
-                    println!("   Scores reflect heuristic signals (votes, maintainer reputation, PKGBUILD analysis)");
-                    println!("   not cryptographic verification. Review PKGBUILDs before installing.");
+                    println!(
+                        "   Scores reflect heuristic signals (votes, maintainer reputation, PKGBUILD analysis)"
+                    );
+                    println!(
+                        "   not cryptographic verification. Review PKGBUILDs before installing."
+                    );
                 }
                 cli::TrustCmd::Stats => {
                     println!("[trust] Computing trust statistics...\n");
@@ -498,7 +510,8 @@ async fn main() {
                                 cached_count += 1;
                                 // Check if stale
                                 if let Ok(content) = std::fs::read_to_string(entry.path())
-                                    && let Ok(cached) = serde_json::from_str::<trust::TrustScore>(&content)
+                                    && let Ok(cached) =
+                                        serde_json::from_str::<trust::TrustScore>(&content)
                                     && !trust_engine.is_cache_fresh(&cached)
                                 {
                                     stale_count += 1;
@@ -509,7 +522,10 @@ async fn main() {
                     println!("\n📦 Cache Statistics:");
                     println!("  Cached scores: {}", cached_count);
                     println!("  Stale entries: {}", stale_count);
-                    println!("  Fresh entries: {}", cached_count.saturating_sub(stale_count));
+                    println!(
+                        "  Fresh entries: {}",
+                        cached_count.saturating_sub(stale_count)
+                    );
                 }
                 cli::TrustCmd::Update => {
                     println!("[trust] Updating trust database...");
@@ -1211,10 +1227,7 @@ fn display_transaction_list(records: &[transaction::TransactionRecord]) {
     }
 
     println!();
-    println!(
-        "Use {} to see details",
-        "reap rollback show <txid>".cyan()
-    );
+    println!("Use {} to see details", "reap rollback show <txid>".cyan());
 }
 
 fn display_transaction_details(record: &transaction::TransactionRecord) {
@@ -1460,11 +1473,7 @@ fn display_rollback_preview(record: &transaction::TransactionRecord) {
         if !plan.analysis.provider_changes.is_empty() {
             println!("{} Provider changes detected:", "INFO".cyan());
             for change in &plan.analysis.provider_changes {
-                println!(
-                    "    {} provides {}",
-                    change.old_provider,
-                    change.capability
-                );
+                println!("    {} provides {}", change.old_provider, change.capability);
             }
             println!();
         }
@@ -1478,7 +1487,12 @@ fn display_rollback_preview(record: &transaction::TransactionRecord) {
     println!("  Removals:     {}", removals.len());
     println!("  Unavailable:  {}", unavailable.len());
     if plan.has_warnings() {
-        let critical_count = plan.analysis.warnings.iter().filter(|w| w.is_critical()).count();
+        let critical_count = plan
+            .analysis
+            .warnings
+            .iter()
+            .filter(|w| w.is_critical())
+            .count();
         let advisory_count = plan.analysis.warnings.len() - critical_count;
         println!("  Critical:     {}", critical_count);
         println!("  Advisories:   {}", advisory_count);
@@ -1487,10 +1501,7 @@ fn display_rollback_preview(record: &transaction::TransactionRecord) {
     if unavailable.is_empty() && !plan.has_critical_warnings() {
         println!();
         println!("{} All packages can be rolled back.", "OK".green());
-        println!(
-            "Run {} to execute.",
-            "reap rollback apply <txid>".cyan()
-        );
+        println!("Run {} to execute.", "reap rollback apply <txid>".cyan());
     } else if plan.has_critical_warnings() {
         println!();
         println!(

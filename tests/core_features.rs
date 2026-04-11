@@ -1,4 +1,4 @@
-// Core feature tests for Reap v0.8.0
+// Core feature tests for Reap
 use anyhow::{Context, Result};
 use reap::config::GlobalConfig;
 use reap::flatpak;

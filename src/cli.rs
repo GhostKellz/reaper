@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 #[derive(Parser, Debug)]
 #[command(
     name = "reap",
-    version = "0.8.0",
+    version = env!("CARGO_PKG_VERSION"),
     about = "Reaper - A fast, secure AUR helper for Arch Linux",
     long_about = "Reaper: Secure, unified Rust-powered meta package manager\n\n\
 USAGE EXAMPLES:\n  \

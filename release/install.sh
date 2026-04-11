@@ -11,7 +11,7 @@ REPO_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}"
 INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="${HOME}/.config/reap"
 BINARY_NAME="reap"
-VERSION="v0.8.0"
+VERSION="v0.8.1"
 
 # Colors
 readonly RED='\033[0;31m'
@@ -185,10 +185,26 @@ build_from_source() {
         error "Build failed"
         return 1
     }
-    
-    # Copy binary
-    cp "target/release/${BINARY_NAME}" "${TEMP_DIR}/${BINARY_NAME}"
-    
+
+    # Find the binary - check both standard and target-triple paths
+    local binary_src=""
+    if [[ -f "target/release/${BINARY_NAME}" ]]; then
+        binary_src="target/release/${BINARY_NAME}"
+    elif [[ -f "target/x86_64-unknown-linux-gnu/release/${BINARY_NAME}" ]]; then
+        binary_src="target/x86_64-unknown-linux-gnu/release/${BINARY_NAME}"
+    else
+        # Fallback: search for it
+        binary_src=$(find target -name "${BINARY_NAME}" -type f -executable 2>/dev/null | grep release | head -1)
+    fi
+
+    if [[ -z "$binary_src" || ! -f "$binary_src" ]]; then
+        error "Could not find built binary"
+        return 1
+    fi
+
+    debug "Found binary at: $binary_src"
+    cp "$binary_src" "${TEMP_DIR}/${BINARY_NAME}"
+
     success "Build completed successfully"
 }
 
@@ -383,6 +399,39 @@ fi
 EOF
         chmod +x "$hook_file"
         debug "Sample hook created"
+    fi
+
+    # Create pinned.toml if it doesn't exist
+    if [[ ! -f "${CONFIG_DIR}/pinned.toml" ]]; then
+        cat > "${CONFIG_DIR}/pinned.toml" << 'EOF'
+# Pinned packages - these will not be upgraded automatically
+# Example:
+# [packages]
+# linux = "6.12.1"
+# nvidia-dkms = "565.57.01"
+
+[packages]
+EOF
+        debug "Pinned packages config created"
+    fi
+
+    # Create reap.lua if it doesn't exist
+    if [[ ! -f "${CONFIG_DIR}/reap.lua" ]]; then
+        cat > "${CONFIG_DIR}/reap.lua" << 'EOF'
+-- Reaper Lua hooks configuration
+-- This file is loaded when enable_lua_hooks = true in reap.toml
+
+-- Example: Pre-install hook
+-- function pre_install(pkg)
+--     print("Installing: " .. pkg.name)
+-- end
+
+-- Example: Post-install hook
+-- function post_install(pkg)
+--     print("Installed: " .. pkg.name .. " v" .. pkg.version)
+-- end
+EOF
+        debug "Lua hooks config created"
     fi
 }
 

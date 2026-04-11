@@ -130,9 +130,9 @@ pub fn pinned_file() -> PathBuf {
     CONFIG_DIR.join("pinned.toml")
 }
 
-/// Brew Lua script: ~/.config/reap/brew.lua
-pub fn brew_lua() -> PathBuf {
-    CONFIG_DIR.join("brew.lua")
+/// Reap Lua hooks script: ~/.config/reap/reap.lua
+pub fn reap_lua() -> PathBuf {
+    CONFIG_DIR.join("reap.lua")
 }
 
 /// Chroot directory: ~/.cache/reap/chroot/

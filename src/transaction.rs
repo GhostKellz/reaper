@@ -412,7 +412,9 @@ fn is_package_rollbackable(change: &PackageChange) -> Result<(), String> {
         PackageChangeType::Install | PackageChangeType::DependencyInstall => {
             // Fresh installs roll back by removing - always possible
         }
-        PackageChangeType::Upgrade | PackageChangeType::Downgrade | PackageChangeType::Reinstall => {
+        PackageChangeType::Upgrade
+        | PackageChangeType::Downgrade
+        | PackageChangeType::Reinstall => {
             // Need previous artifact to restore
             if change.previous_artifact.is_none() {
                 return Err("Previous artifact path not recorded".to_string());
@@ -550,11 +552,11 @@ pub struct RollbackResult {
 #[derive(Debug)]
 pub struct RollbackPlan {
     pub transaction_id: String,
-    pub downgrades: Vec<(String, String, PathBuf)>,  // (pkg_name, expected_version, artifact_path)
-    pub reinstalls: Vec<(String, String, PathBuf)>,  // (pkg_name, expected_version, artifact_path)
-    pub removals: Vec<String>,                        // pkg_name
-    pub unavailable: Vec<(String, String)>,           // (pkg_name, reason)
-    pub analysis: RollbackAnalysis,                   // Dependency/conflict analysis
+    pub downgrades: Vec<(String, String, PathBuf)>, // (pkg_name, expected_version, artifact_path)
+    pub reinstalls: Vec<(String, String, PathBuf)>, // (pkg_name, expected_version, artifact_path)
+    pub removals: Vec<String>,                      // pkg_name
+    pub unavailable: Vec<(String, String)>,         // (pkg_name, reason)
+    pub analysis: RollbackAnalysis,                 // Dependency/conflict analysis
 }
 
 impl RollbackPlan {
@@ -592,7 +594,7 @@ impl RollbackPlan {
 #[derive(Debug, Default)]
 pub struct RollbackAnalysis {
     pub warnings: Vec<RollbackWarning>,
-    pub dependency_closure: Vec<String>,  // Additional packages affected
+    pub dependency_closure: Vec<String>, // Additional packages affected
     pub provider_changes: Vec<ProviderChange>,
 }
 
@@ -607,10 +609,7 @@ pub enum RollbackWarning {
         rollback_version: String,
     },
     /// A package that depends on the target will also need attention
-    AffectedDependent {
-        package: String,
-        dependent: String,
-    },
+    AffectedDependent { package: String, dependent: String },
     /// Provider change - something else now provides what this package provided
     ProviderConflict {
         package: String,
@@ -668,11 +667,9 @@ impl RollbackWarning {
                 "{} provided {} but {} now provides it",
                 package, provides, current_provider
             ),
-            RollbackWarning::OrphanedDependencies { package, orphans } => format!(
-                "Removing {} may orphan: {}",
-                package,
-                orphans.join(", ")
-            ),
+            RollbackWarning::OrphanedDependencies { package, orphans } => {
+                format!("Removing {} may orphan: {}", package, orphans.join(", "))
+            }
             RollbackWarning::VersionConflict {
                 package,
                 conflicting_package,
@@ -722,8 +719,12 @@ pub fn create_rollback_plan(record: &TransactionRecord) -> RollbackPlan {
                 // Removals are rolled back by reinstalling from artifact
                 if let Some(ref artifact) = change.previous_artifact {
                     if artifact.exists() {
-                        let version = change.previous_version.clone().unwrap_or_else(|| "unknown".to_string());
-                        plan.reinstalls.push((change.name.clone(), version, artifact.clone()));
+                        let version = change
+                            .previous_version
+                            .clone()
+                            .unwrap_or_else(|| "unknown".to_string());
+                        plan.reinstalls
+                            .push((change.name.clone(), version, artifact.clone()));
                     } else {
                         plan.unavailable.push((
                             change.name.clone(),
@@ -741,13 +742,21 @@ pub fn create_rollback_plan(record: &TransactionRecord) -> RollbackPlan {
                 // Version changes are rolled back by installing previous version
                 if let Some(ref artifact) = change.previous_artifact {
                     if artifact.exists() {
-                        let version = change.previous_version.clone().unwrap_or_else(|| "unknown".to_string());
-                        plan.downgrades.push((change.name.clone(), version, artifact.clone()));
+                        let version = change
+                            .previous_version
+                            .clone()
+                            .unwrap_or_else(|| "unknown".to_string());
+                        plan.downgrades
+                            .push((change.name.clone(), version, artifact.clone()));
                     } else {
                         // Try to find artifact in cache again (might have been restored)
                         if let Some(ref prev_ver) = change.previous_version {
                             if let Some(found) = find_artifact_in_cache(&change.name, prev_ver) {
-                                plan.downgrades.push((change.name.clone(), prev_ver.clone(), found));
+                                plan.downgrades.push((
+                                    change.name.clone(),
+                                    prev_ver.clone(),
+                                    found,
+                                ));
                             } else {
                                 plan.unavailable.push((
                                     change.name.clone(),
@@ -764,7 +773,8 @@ pub fn create_rollback_plan(record: &TransactionRecord) -> RollbackPlan {
                 } else if let Some(ref prev_ver) = change.previous_version {
                     // No artifact recorded but we know the version - try to find it
                     if let Some(found) = find_artifact_in_cache(&change.name, prev_ver) {
-                        plan.downgrades.push((change.name.clone(), prev_ver.clone(), found));
+                        plan.downgrades
+                            .push((change.name.clone(), prev_ver.clone(), found));
                     } else {
                         plan.unavailable.push((
                             change.name.clone(),
@@ -772,8 +782,10 @@ pub fn create_rollback_plan(record: &TransactionRecord) -> RollbackPlan {
                         ));
                     }
                 } else {
-                    plan.unavailable
-                        .push((change.name.clone(), "No artifact or version recorded".to_string()));
+                    plan.unavailable.push((
+                        change.name.clone(),
+                        "No artifact or version recorded".to_string(),
+                    ));
                 }
             }
         }
@@ -805,10 +817,12 @@ fn analyze_rollback_plan(plan: &RollbackPlan, record: &TransactionRecord) -> Rol
 
     // Warn about mixed source transactions
     if !repo_packages.is_empty() && !aur_packages.is_empty() {
-        analysis.warnings.push(RollbackWarning::MixedSourceTransaction {
-            repo_packages: repo_packages.clone(),
-            aur_packages: aur_packages.clone(),
-        });
+        analysis
+            .warnings
+            .push(RollbackWarning::MixedSourceTransaction {
+                repo_packages: repo_packages.clone(),
+                aur_packages: aur_packages.clone(),
+            });
     }
 
     // Analyze downgrades for dependency breaks
@@ -882,10 +896,12 @@ fn analyze_rollback_plan(plan: &RollbackPlan, record: &TransactionRecord) -> Rol
         }
 
         if !potential_orphans.is_empty() {
-            analysis.warnings.push(RollbackWarning::OrphanedDependencies {
-                package: pkg.clone(),
-                orphans: potential_orphans,
-            });
+            analysis
+                .warnings
+                .push(RollbackWarning::OrphanedDependencies {
+                    package: pkg.clone(),
+                    orphans: potential_orphans,
+                });
         }
 
         // Add to dependency closure
@@ -924,7 +940,12 @@ pub fn execute_rollback(plan: &RollbackPlan) -> RollbackResult {
 
     // Phase 1: Downgrades (install previous versions)
     for (pkg, expected_ver, artifact) in &plan.downgrades {
-        println!("[rollback] Downgrading {} to {} from {}...", pkg, expected_ver, artifact.display());
+        println!(
+            "[rollback] Downgrading {} to {} from {}...",
+            pkg,
+            expected_ver,
+            artifact.display()
+        );
 
         let status = Command::new("sudo")
             .args(["pacman", "-U", "--noconfirm"])
@@ -933,7 +954,10 @@ pub fn execute_rollback(plan: &RollbackPlan) -> RollbackResult {
 
         match status {
             Ok(s) if s.success() => {
-                println!("[rollback] Successfully downgraded {} to {}", pkg, expected_ver);
+                println!(
+                    "[rollback] Successfully downgraded {} to {}",
+                    pkg, expected_ver
+                );
                 result.packages_restored.push(pkg.clone());
             }
             Ok(_) => {
@@ -967,7 +991,10 @@ pub fn execute_rollback(plan: &RollbackPlan) -> RollbackResult {
 
         match status {
             Ok(s) if s.success() => {
-                println!("[rollback] Successfully reinstalled {} {}", pkg, expected_ver);
+                println!(
+                    "[rollback] Successfully reinstalled {} {}",
+                    pkg, expected_ver
+                );
                 result.packages_restored.push(pkg.clone());
             }
             Ok(_) => {
@@ -987,10 +1014,7 @@ pub fn execute_rollback(plan: &RollbackPlan) -> RollbackResult {
 
     // Phase 3: Removals (remove freshly installed packages)
     if !plan.removals.is_empty() {
-        println!(
-            "[rollback] Removing {} package(s)...",
-            plan.removals.len()
-        );
+        println!("[rollback] Removing {} package(s)...", plan.removals.len());
 
         let status = Command::new("sudo")
             .args(["pacman", "-R", "--noconfirm"])
@@ -1069,7 +1093,10 @@ fn verify_rollback(plan: &RollbackPlan, result: &RollbackResult) -> bool {
         if result.packages_restored.contains(pkg) {
             if let Some(actual_ver) = crate::pacman::get_version(pkg) {
                 if &actual_ver == expected_ver || expected_ver == "unknown" {
-                    println!("[rollback] Verified: {} reinstalled at version {}", pkg, actual_ver);
+                    println!(
+                        "[rollback] Verified: {} reinstalled at version {}",
+                        pkg, actual_ver
+                    );
                 } else {
                     eprintln!(
                         "[rollback] Warning: {} at version {} (expected {})",
@@ -1177,7 +1204,11 @@ pub fn aur_artifacts_dir() -> PathBuf {
 }
 
 /// Retain an AUR artifact for future rollback
-pub fn retain_aur_artifact(pkg: &str, version: &str, build_dir: &std::path::Path) -> Option<PathBuf> {
+pub fn retain_aur_artifact(
+    pkg: &str,
+    version: &str,
+    build_dir: &std::path::Path,
+) -> Option<PathBuf> {
     use std::fs;
 
     let artifacts_dir = aur_artifacts_dir();
@@ -1296,7 +1327,10 @@ mod tests {
         assert_eq!(format!("{}", TransactionOperation::Install), "Install");
         assert_eq!(format!("{}", TransactionOperation::Upgrade), "Upgrade");
         assert_eq!(format!("{}", TransactionOperation::Remove), "Remove");
-        assert_eq!(format!("{}", TransactionOperation::UpgradeAll), "UpgradeAll");
+        assert_eq!(
+            format!("{}", TransactionOperation::UpgradeAll),
+            "UpgradeAll"
+        );
     }
 
     #[test]
@@ -1602,10 +1636,8 @@ mod tests {
     #[test]
     fn test_transaction_builder() {
         let journal = TransactionJournal::new();
-        let mut builder = journal.begin_transaction(
-            TransactionOperation::Install,
-            vec!["test-pkg".to_string()],
-        );
+        let mut builder =
+            journal.begin_transaction(TransactionOperation::Install, vec!["test-pkg".to_string()]);
 
         builder.add_package_change(PackageChange {
             name: "test-pkg".to_string(),
@@ -1626,10 +1658,8 @@ mod tests {
     #[test]
     fn test_transaction_builder_fail() {
         let journal = TransactionJournal::new();
-        let builder = journal.begin_transaction(
-            TransactionOperation::Install,
-            vec!["test-pkg".to_string()],
-        );
+        let builder =
+            journal.begin_transaction(TransactionOperation::Install, vec!["test-pkg".to_string()]);
 
         let record = builder.fail("Build failed".to_string());
         assert!(matches!(record.status, TransactionStatus::Failed(_)));
