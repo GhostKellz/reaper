@@ -42,7 +42,7 @@ reap --help
 ```
 
 - All install/upgrade logic is now async/parallel and does not use yay/paru fallback.
-- See README.md and COMMANDS.md for the latest CLI options and features. 
+- See [README](../../README.md) and [Commands](../usage/commands.md) for the latest CLI options and features. 
 ## Binary Releases
 
 Download the latest `reap-x86_64.tar.gz` from the GitHub Releases page and extract:
