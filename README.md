@@ -83,7 +83,7 @@ reap tap ...                        # Tap repo management
 
 - All install/upgrade flows are now async/parallel and do not use yay/paru fallback.
 - TUI and CLI support all major commands, including rollback, pin, audit, and tap management.
-- See [COMMANDS.md](COMMANDS.md) for the full updated command list.
+- See [Commands Reference](docs/usage/commands.md) for the full updated command list.
 
 ### Tap GPG Verification Example
 
@@ -162,7 +162,7 @@ url = "https://ghostkellz.sh"
 ```
 
 **For tap publishers:**
-- Generate a GPG key (see PUBLISHING.md).
+- Generate a GPG key (see [Tap Publishing](docs/usage/tap-publishing.md)).
 - Sign your PKGBUILD: `gpg --detach-sign --armor PKGBUILD`
 - Add your info to publisher.toml and commit both files to your tap repo.
 
@@ -170,7 +170,7 @@ url = "https://ghostkellz.sh"
 - Use `reap install <pkg>` as normal. Reaper will verify the signature and show publisher info.
 - Use `--insecure` to skip verification (not recommended).
 
-See [Full Docs](DOCS.md#publisher-verification-and-gpg) for details.
+See [GPG Verification](docs/security/gpg-verification.md) for details.
 
 ---
 
@@ -279,6 +279,8 @@ See [Configuration Guide](docs/usage/configuration.md) for advanced configuratio
 ---
 
 ## 📚 Documentation
+
+**[Full Documentation](docs/README.md)** - Complete documentation index
 
 ### Getting Started
 - **[Quick Start](docs/getting-started/quickstart.md)** - Get up and running

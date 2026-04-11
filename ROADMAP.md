@@ -1,4 +1,4 @@
-## v0.8.1 Priorities
+## v0.8.2 Priorities
 
 ### 1. Rollback Validation Follow-Up
 
@@ -38,5 +38,3 @@
 
 - [ ] Re-evaluate broader multi-source follow-up only if it does not compromise the Arch-native core
 - [ ] Decide whether the next major expansion is docs polish, rollback enhancements, or broader package-source work
-
-
