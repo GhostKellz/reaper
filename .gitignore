@@ -1,6 +1,5 @@
 # Rust
 target/
-Cargo.lock
 
 # OS
 .DS_Store
@@ -21,9 +20,7 @@ Thumbs.db
 # Build artifacts
 *.exe
 *.pdb
-CLAUDE.md
-TODO.md 
-CODEX.md 
+CLAUDE.md 
 archive/
 references/
 tasks/

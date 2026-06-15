@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-06-15
+
+### 🛡️ Added - Supply-Chain Hardening
+- **`.install` hook scanning** - `reap security audit` and `reap security scan-all` now fetch and scan a package's `.install` file alongside the PKGBUILD, where install-time payloads commonly hide
+- **Supply-chain detection patterns** - flags build-time techniques used by the June 2026 "Atomic Arch" AUR campaign: bundled hook execution (`src/hooks/`), npm/bun/pnpm/yarn dependency installs, npm `preinstall`/`postinstall` lifecycle hooks, and `.onion` C2 endpoints
+- **Expanded suspicious-domain list** - added `temp.sh` to the flagged temporary-file hosts
+
+### 🔧 Changed
+- **Dependabot** - cargo updates now grouped (minor/patch) and a `github-actions` ecosystem block was added
+- **Packaging** - `release/PKGBUILD` version synced; added `provides`/`conflicts` and a `.SRCINFO`
+
 ## [0.8.1] - 2026-04-11
 
 ### 🐛 Fixed

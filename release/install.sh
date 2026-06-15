@@ -11,7 +11,7 @@ REPO_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}"
 INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="${HOME}/.config/reap"
 BINARY_NAME="reap"
-VERSION="v0.8.1"
+VERSION="v0.8.2"
 
 # Colors
 readonly RED='\033[0;31m'

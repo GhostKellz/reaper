@@ -76,6 +76,27 @@ Packages may have security flags indicating concerns:
 
 These are informational - they don't prevent installation.
 
+## Supply-Chain Detection
+
+`reap security audit` and `reap security scan-all` analyze both the PKGBUILD and
+its `.install` hook. Install hooks run on your machine with elevated privileges,
+so they are a common hiding place for payloads.
+
+Beyond the general risky-pattern scan, reaper flags build-time techniques seen in
+real AUR supply-chain campaigns (e.g. the June 2026 "Atomic Arch" incident):
+
+- **Bundled hook execution** - running scripts or binaries shipped under `src/hooks/`
+- **JS package installs** - `npm`/`bun`/`pnpm`/`yarn` pulling and executing dependencies during build
+- **npm lifecycle hooks** - `preinstall`/`postinstall` scripts that execute local code
+- **Tor C2 endpoints** - `.onion` addresses
+- **Temporary-file hosts** - paste/upload sites used for staging payloads
+
+Detection is **behavioral** - it targets the techniques rather than specific
+indicators, so it stays useful as payloads change. As with all trust signals,
+these are advisory and never block installation. Always review PKGBUILD and
+`.install` diffs before rebuilding a package, especially for adopted or
+recently-changed AUR packages.
+
 ## See Also
 
 - [GPG Verification](./gpg-verification.md) - Signature verification details

@@ -1,0 +1,21 @@
+pkgbase = reaper
+	pkgdesc = Fast, async AUR helper written in Rust
+	pkgver = 0.8.2
+	pkgrel = 1
+	url = https://github.com/GhostKellz/reaper
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	makedepends = rust
+	makedepends = cargo
+	depends = pacman
+	depends = git
+	optdepends = flatpak: Flatpak support
+	optdepends = gnupg: GPG signature verification
+	provides = reaper
+	provides = reap
+	conflicts = reaper-git
+	source = reaper-0.8.2.tar.gz::https://github.com/GhostKellz/reaper/archive/v0.8.2.tar.gz
+	sha256sums = SKIP
+
+pkgname = reaper

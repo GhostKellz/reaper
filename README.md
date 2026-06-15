@@ -26,6 +26,7 @@
 * Unified search: AUR, Pacman, Flatpak, ChaoticAUR, ghostctl-aur, custom binary repos
 * Interactive TUI installer with multi-source search and install queue
 * GPG key importing, PKGBUILD diff and auditing, trust level reporting
+* Supply-chain auditing: scans PKGBUILD **and** `.install` hooks for build-time and supply-chain attack patterns
 * Rollback system, backup/restore, and multi-package upgrades
 * Flatpak integration with metadata and audit
 * Orphan detection and removal (AUR/pacman)
@@ -130,6 +131,8 @@ reap tui                              # Launch enhanced TUI
 # 🛡️ Security and trust operations
 reap trust scan                       # Scan all packages for security
 reap trust stats                      # Show trust statistics
+reap security audit firefox           # Audit PKGBUILD + .install for supply-chain patterns
+reap security scan-all                # Audit every installed AUR package
 
 # Standard package operations (enhanced with trust/ratings)
 reap search firefox                   # Search with trust badges

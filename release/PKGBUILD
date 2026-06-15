@@ -1,6 +1,6 @@
 # Maintainer: GhostKellz <ckelley@ghostkellz.sh>
 pkgname=reaper
-pkgver=0.8.0
+pkgver=0.8.2
 pkgrel=1
 pkgdesc="Fast, async AUR helper written in Rust"
 arch=('x86_64' 'aarch64')
@@ -12,6 +12,8 @@ optdepends=(
     'gnupg: GPG signature verification'
 )
 makedepends=('rust' 'cargo')
+provides=('reaper' 'reap')
+conflicts=('reaper-git')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/GhostKellz/reaper/archive/v$pkgver.tar.gz")
 sha256sums=('SKIP')
 

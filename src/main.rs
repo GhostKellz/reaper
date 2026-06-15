@@ -750,7 +750,12 @@ async fn main() {
             cli::SecurityCmd::Audit { pkg } => {
                 println!("[security] Auditing package: {}", pkg);
                 let pkgbuild = aur::get_pkgbuild_preview(&pkg);
-                let (warnings, risk_score) = utils::audit_pkgbuild(&pkgbuild);
+                let install_hook = aur::get_install_file_preview(&pkg, &pkgbuild);
+                if !install_hook.is_empty() {
+                    println!("[security] Including .install hook in scan");
+                }
+                let audit_input = format!("{}\n{}", pkgbuild, install_hook);
+                let (warnings, risk_score) = utils::audit_pkgbuild(&audit_input);
 
                 if warnings.is_empty() {
                     println!("✅ Package {} passed security audit", pkg);
@@ -786,7 +791,9 @@ async fn main() {
 
                 for (pkg, _source) in &aur_packages {
                     let pkgbuild = aur::get_pkgbuild_preview(pkg);
-                    let (warnings, risk_score) = utils::audit_pkgbuild(&pkgbuild);
+                    let install_hook = aur::get_install_file_preview(pkg, &pkgbuild);
+                    let audit_input = format!("{}\n{}", pkgbuild, install_hook);
+                    let (warnings, risk_score) = utils::audit_pkgbuild(&audit_input);
                     scanned_count += 1;
 
                     if risk_score > 15 {

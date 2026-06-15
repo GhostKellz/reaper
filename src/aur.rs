@@ -241,6 +241,52 @@ pub fn get_pkgbuild_preview(pkg: &str) -> String {
     String::from("[reap] PKGBUILD not found.")
 }
 
+/// Resolve the filename referenced by a PKGBUILD `install=` directive.
+///
+/// Returns `None` when the PKGBUILD declares no install hook. `$pkgname` /
+/// `${pkgname}` references are substituted with the package name.
+fn parse_install_filename(pkgbuild: &str, pkg: &str) -> Option<String> {
+    for line in pkgbuild.lines() {
+        let trimmed = line.trim_start();
+        if let Some(value) = trimmed.strip_prefix("install=") {
+            let name = value
+                .trim()
+                .trim_matches(&['"', '\'', '(', ')', ' '] as &[_])
+                .replace("${pkgname}", pkg)
+                .replace("$pkgname", pkg);
+            if name.is_empty() {
+                return None;
+            }
+            return Some(name);
+        }
+    }
+    None
+}
+
+/// Fetch the `.install` hook file referenced by a PKGBUILD, if any.
+///
+/// Install hooks (`pre_install`/`post_install`) run on the user's machine with
+/// elevated privileges, making them a prime payload location for supply-chain
+/// attacks. Returns an empty string when no hook is declared or the fetch
+/// fails, so callers can safely scan the result unconditionally. No network
+/// request is made for packages without an `install=` directive.
+pub fn get_install_file_preview(pkg: &str, pkgbuild: &str) -> String {
+    let Some(name) = parse_install_filename(pkgbuild, pkg) else {
+        return String::new();
+    };
+
+    let url = format!(
+        "https://aur.archlinux.org/cgit/aur.git/plain/{}?h={}",
+        name, pkg
+    );
+    if let Ok(resp) = reqwest::blocking::get(&url)
+        && let Ok(text) = resp.text()
+    {
+        return text;
+    }
+    String::new()
+}
+
 /// Extract dependencies from PKGBUILD
 pub fn get_deps(pkgb: &str) -> Vec<String> {
     let mut deps = Vec::new();
@@ -568,4 +614,33 @@ pub async fn warm_cache() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     println!("[aur] Cache warming completed");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_quoted_install_directive() {
+        let pkgbuild = "pkgname=foo\ninstall=\"foo.install\"\n";
+        assert_eq!(
+            parse_install_filename(pkgbuild, "foo"),
+            Some("foo.install".to_string())
+        );
+    }
+
+    #[test]
+    fn substitutes_pkgname_variable() {
+        let pkgbuild = "pkgname=foo\ninstall=${pkgname}.install\n";
+        assert_eq!(
+            parse_install_filename(pkgbuild, "foo"),
+            Some("foo.install".to_string())
+        );
+    }
+
+    #[test]
+    fn returns_none_without_install_directive() {
+        let pkgbuild = "pkgname=foo\npkgver=1.0\n";
+        assert_eq!(parse_install_filename(pkgbuild, "foo"), None);
+    }
 }

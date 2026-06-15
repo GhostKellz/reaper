@@ -65,7 +65,12 @@ See [Rollback Guide](./rollback.md) for detailed usage.
 - `reap trust update`: Update trust database
 
 ### Security Commands
+- `reap security audit <pkg>`: Audit a package's PKGBUILD and `.install` hook for risky and supply-chain patterns
+- `reap security scan-all`: Audit every installed AUR package
 - `reap security stats`: Show security statistics
+- `reap security update-rules`: Update security rules
+
+The audit scans both the PKGBUILD and the `.install` hook (when present), flagging build-time code-execution and supply-chain techniques such as bundled hook execution, npm/bun dependency installs, npm lifecycle hooks, and Tor C2 endpoints.
 
 ### GPG Commands
 - `reap gpg import <keyid>`: Import a GPG key
