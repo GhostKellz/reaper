@@ -144,16 +144,11 @@ fn run_shell_hook_silent(hook: &str, ctx: &HookContext) {
     let _ = run_shell_hook(hook, ctx);
 }
 
-fn run_lua_hook(_hook: &str, _ctx: &HookContext) {
-    // Lua support is stubbed for future advanced setup.
-}
-
 /// Pre-installation hook, called before a package is installed.
 /// This will execute any `pre_install` script found in the hooks directory.
 /// Hooks run with a 30-second timeout and sanitized environment variables.
 pub fn pre_install(ctx: &HookContext) {
     run_shell_hook_silent("pre_install", ctx);
-    run_lua_hook("pre_install", ctx);
 }
 
 /// Post-installation hook, called after a package is installed.
@@ -161,7 +156,6 @@ pub fn pre_install(ctx: &HookContext) {
 /// Hooks run with a 30-second timeout and sanitized environment variables.
 pub fn post_install(ctx: &HookContext) {
     run_shell_hook_silent("post_install", ctx);
-    run_lua_hook("post_install", ctx);
 }
 
 /// Run a hook and return the result (for cases where caller needs to handle failures)

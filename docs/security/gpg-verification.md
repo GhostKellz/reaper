@@ -16,8 +16,8 @@ When installing from a tap repository:
 | Result | Behavior |
 |--------|----------|
 | Valid signature | Shows green verification badge |
-| Invalid signature | Shows warning, continues install |
-| Missing signature | Shows info message, continues install |
+| Invalid signature | Aborts install unless `--insecure` is used |
+| Missing signature | Aborts install unless `--insecure` is used |
 | Missing key | Attempts to fetch from keyserver |
 
 ## GPG Commands
@@ -33,10 +33,7 @@ reap gpg show <keyid>
 reap gpg check <keyid>
 
 # Verify PKGBUILD signature manually
-reap gpg verify /path/to/pkgbuild
-
-# Set keyserver for key fetching
-reap gpg set-keyserver hkps://keys.openpgp.org
+reap gpg verify-pkgbuild /path/to/pkgbuild
 
 # Test keyserver connectivity
 reap gpg check-keyserver hkps://keys.openpgp.org
@@ -46,7 +43,8 @@ reap gpg check-keyserver hkps://keys.openpgp.org
 
 ### Default Mode
 
-Verifies signatures when present, warns if missing or invalid, but doesn't block:
+Requires valid signatures for tap packages and aborts on missing or invalid
+signatures:
 
 ```bash
 reap install package
@@ -54,7 +52,7 @@ reap install package
 
 ### Strict Mode
 
-Requires valid signature - aborts if missing or invalid:
+Requires fully trusted signatures where verification is available:
 
 ```bash
 reap install package --strict
@@ -63,7 +61,7 @@ reap install package --strict
 Or in config:
 ```toml
 [security]
-strict_signatures = true
+strict_mode = true
 ```
 
 ### Insecure Mode
@@ -107,8 +105,8 @@ gpg --keyserver hkps://keys.openpgp.org --recv-keys <keyid>
 
 **Keyserver unreachable:**
 ```bash
-# Try a different keyserver
-reap gpg set-keyserver hkps://keyserver.ubuntu.com
+# Test connectivity to a different keyserver
+reap gpg check-keyserver hkps://keyserver.ubuntu.com
 ```
 
 ## See Also

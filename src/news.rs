@@ -103,7 +103,7 @@ impl NewsManager {
             }
         }
 
-        all_news.sort_by(|a, b| b.published.cmp(&a.published));
+        all_news.sort_by_key(|item| std::cmp::Reverse(item.published));
 
         for item in &mut all_news {
             if self.cache.read_items.contains(&item.id) {
@@ -120,7 +120,7 @@ impl NewsManager {
     }
 
     async fn fetch_rss_feed(&self, url: &str) -> Result<Vec<NewsItem>, Box<dyn std::error::Error>> {
-        let response = reqwest::get(url).await?;
+        let response = crate::http::client().get(url).send().await?;
         let content = response.text().await?;
 
         let mut items = Vec::new();

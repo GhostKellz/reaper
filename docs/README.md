@@ -17,9 +17,12 @@
 
 - [Trust Model](security/trust-model.md) - Advisory trust system
 - [GPG Verification](security/gpg-verification.md) - Signature verification
+- [Accepted Advisories](advisories/accepted.md) - Currently accepted RustSec advisories
+- [Resolved Advisories](advisories/resolved.md) - RustSec advisories cleared by dependency work
 
 ## Development
 
+- [Roadmap](roadmap.md) - Current project priorities
 - [Architecture](development/architecture.md) - System design
 - [API Reference](development/api.md) - API documentation
 - [Development Guide](development/dev-guide.md) - Development tips

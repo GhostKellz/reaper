@@ -19,7 +19,7 @@ PACMAN-STYLE FLAGS:\n  \
   reap -R <pkg>                Remove packages (like pacman -R)\n  \
   reap -Syu                    Sync and upgrade (like pacman -Syu)\n  \
   reap -Qu                     Query upgradable packages\n\n\
-Config: ~/.config/reaper/reap.toml"
+Config: ~/.config/reap/reap.toml"
 )]
 pub struct Cli {
     /// Sync operation (install packages) - pacman -S style
@@ -148,6 +148,19 @@ pub enum Commands {
         binary_only: bool,
         #[arg(long)]
         diff: bool,
+        #[arg(long, help = "Skip optional preflight checks for faster installation")]
+        fast: bool,
+        #[arg(
+            long,
+            help = "Require fully trusted signatures where verification is available"
+        )]
+        strict: bool,
+        #[arg(long, help = "Preview the install plan without installing")]
+        dry_run: bool,
+        #[arg(long, help = "Skip confirmation prompts")]
+        noconfirm: bool,
+        #[arg(long, help = "Skip structured PKGBUILD review prompts")]
+        skipreview: bool,
         #[arg(long, help = "Skip signature verification (use with caution)")]
         insecure: bool,
     },
@@ -156,6 +169,12 @@ pub enum Commands {
         pkgs: Vec<String>,
         #[arg(long)]
         parallel: bool,
+        #[arg(long, help = "Preview the combined install plan without installing")]
+        dry_run: bool,
+        #[arg(long, help = "Skip confirmation prompts")]
+        noconfirm: bool,
+        #[arg(long, help = "Skip structured PKGBUILD review prompts")]
+        skipreview: bool,
     },
     /// Remove one or more packages
     Remove { pkgs: Vec<String> },
@@ -175,6 +194,8 @@ pub enum Commands {
     FlatpakUpgrade,
     /// Audit a package
     Audit { pkg: String },
+    /// Diff a package's current PKGBUILD/.install against the last reviewed baseline
+    Diff { pkg: String },
     /// Transaction rollback management
     Rollback {
         #[command(subcommand)]
@@ -323,7 +344,6 @@ pub enum GpgCmd {
     Show { keyid: String },
     Check { keyid: String },
     VerifyPkgbuild { path: String },
-    SetKeyserver { url: String },
     CheckKeyserver { url: String },
 }
 

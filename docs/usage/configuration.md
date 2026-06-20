@@ -4,31 +4,31 @@ Reaper uses a layered configuration system with clear precedence rules.
 
 ## Configuration Files
 
-- Main config: `~/.config/reaper/reap.toml`
-- Profiles: `~/.config/reaper/profiles/`
-- Pinned packages: `~/.config/reaper/pinned.toml`
-- Hooks: `~/.config/reaper/hooks/`
+- Main config: `~/.config/reap/reap.toml`
+- Profiles: `~/.config/reap/profiles/`
+- Pinned packages: `~/.config/reap/pinned.toml`
+- Hooks: `~/.config/reap/hooks/`
 
 ## Precedence Order
 
 Configuration is resolved in this order (later overrides earlier):
 
 1. **Built-in defaults**
-2. **Config file** (`~/.config/reaper/reap.toml`)
+2. **Config file** (`~/.config/reap/reap.toml`)
 3. **Active profile** overrides
 4. **Environment variables** (`REAP_*`)
 5. **CLI flags** (highest priority)
 
 ## Main Configuration
 
-Example `~/.config/reaper/reap.toml`:
+Example `~/.config/reap/reap.toml`:
 
 ```toml
 # Number of parallel build jobs
 parallel = 4
 
 # Backend priority order
-backend_order = ["aur", "pacman", "flatpak"]
+backend_order = ["tap", "aur", "pacman", "flatpak"]
 
 # Automatically resolve dependencies
 auto_resolve_deps = true
@@ -38,24 +38,33 @@ noconfirm = false
 
 [security]
 # Require GPG signatures for tap packages
-strict_signatures = false
+verify_signatures = true
 
-# Allow insecure installs (not recommended)
-allow_insecure = false
+# Require fully trusted signatures where verification is available
+strict_mode = false
+
+# Scan PKGBUILDs for suspicious patterns
+scan_pkgbuilds = true
+
+# Advisory trust score threshold (0.0 - 10.0)
+trust_threshold = 7.0
+
+# How long to cache computed trust scores (hours)
+trust_cache_ttl_hours = 24
 
 [build]
+# Build in a clean chroot
+use_chroot = false
+
 # Clean build directory after install
 clean_after_build = true
 
-# Build directory location
-build_dir = "~/.cache/reaper/build"
-
 [devel]
 # Check for -git package updates
-check_devel = true
+auto_check = true
 
 # VCS update check interval (hours)
-check_interval = 12
+check_interval_hours = 24
 ```
 
 ## Environment Variables
@@ -73,10 +82,10 @@ export REAP_BACKEND_ORDER="aur,pacman"
 CLI flags always take precedence:
 
 ```bash
-reap install firefox --parallel 8
-reap install package --strict    # Require GPG signature
+reap config set parallel 8
+reap install package --strict    # Require fully trusted signature
 reap install package --insecure  # Skip GPG checks
-reap install package --fast      # Skip verification steps
+reap install package --fast      # Skip optional preflight checks
 ```
 
 ## Config Commands

@@ -414,7 +414,9 @@ impl InteractiveSearch {
     fn apply_sort(&mut self) {
         match self.sort_method {
             SortMethod::Name => self.filtered_results.sort_by(|a, b| a.name.cmp(&b.name)),
-            SortMethod::Votes => self.filtered_results.sort_by(|a, b| b.votes.cmp(&a.votes)),
+            SortMethod::Votes => self
+                .filtered_results
+                .sort_by_key(|r| std::cmp::Reverse(r.votes)),
             SortMethod::Popularity => self.filtered_results.sort_by(|a, b| {
                 b.popularity
                     .partial_cmp(&a.popularity)
@@ -426,13 +428,15 @@ impl InteractiveSearch {
     }
 
     async fn enter_filter_mode(&mut self) {
-        execute!(io::stdout(), cursor::MoveTo(0, 35)).unwrap();
-        execute!(io::stdout(), Print("Enter filter (ESC to cancel): ")).unwrap();
-        io::stdout().flush().unwrap();
+        let _ = execute!(io::stdout(), cursor::MoveTo(0, 35));
+        let _ = execute!(io::stdout(), Print("Enter filter (ESC to cancel): "));
+        let _ = io::stdout().flush();
 
         let mut filter = String::new();
-        loop {
-            if let Event::Key(key) = event::read().unwrap() {
+        // Stop the input loop if the terminal event stream is unreadable
+        // instead of panicking.
+        while let Ok(ev) = event::read() {
+            if let Event::Key(key) = ev {
                 match key.code {
                     KeyCode::Esc => break,
                     KeyCode::Enter => {
@@ -442,29 +446,29 @@ impl InteractiveSearch {
                     }
                     KeyCode::Backspace => {
                         filter.pop();
-                        execute!(io::stdout(), cursor::MoveTo(30, 35)).unwrap();
-                        execute!(io::stdout(), terminal::Clear(ClearType::UntilNewLine)).unwrap();
-                        execute!(io::stdout(), Print(&filter)).unwrap();
+                        let _ = execute!(io::stdout(), cursor::MoveTo(30, 35));
+                        let _ = execute!(io::stdout(), terminal::Clear(ClearType::UntilNewLine));
+                        let _ = execute!(io::stdout(), Print(&filter));
                     }
                     KeyCode::Char(c) => {
                         filter.push(c);
-                        execute!(io::stdout(), Print(c)).unwrap();
+                        let _ = execute!(io::stdout(), Print(c));
                     }
                     _ => {}
                 }
-                io::stdout().flush().unwrap();
+                let _ = io::stdout().flush();
             }
         }
     }
 
     async fn enter_search_mode(&mut self) {
-        execute!(io::stdout(), cursor::MoveTo(0, 35)).unwrap();
-        execute!(io::stdout(), Print("Enter search (ESC to cancel): ")).unwrap();
-        io::stdout().flush().unwrap();
+        let _ = execute!(io::stdout(), cursor::MoveTo(0, 35));
+        let _ = execute!(io::stdout(), Print("Enter search (ESC to cancel): "));
+        let _ = io::stdout().flush();
 
         let mut search = String::new();
-        loop {
-            if let Event::Key(key) = event::read().unwrap() {
+        while let Ok(ev) = event::read() {
+            if let Event::Key(key) = ev {
                 match key.code {
                     KeyCode::Esc => break,
                     KeyCode::Enter => {
@@ -473,17 +477,17 @@ impl InteractiveSearch {
                     }
                     KeyCode::Backspace => {
                         search.pop();
-                        execute!(io::stdout(), cursor::MoveTo(30, 35)).unwrap();
-                        execute!(io::stdout(), terminal::Clear(ClearType::UntilNewLine)).unwrap();
-                        execute!(io::stdout(), Print(&search)).unwrap();
+                        let _ = execute!(io::stdout(), cursor::MoveTo(30, 35));
+                        let _ = execute!(io::stdout(), terminal::Clear(ClearType::UntilNewLine));
+                        let _ = execute!(io::stdout(), Print(&search));
                     }
                     KeyCode::Char(c) => {
                         search.push(c);
-                        execute!(io::stdout(), Print(c)).unwrap();
+                        let _ = execute!(io::stdout(), Print(c));
                     }
                     _ => {}
                 }
-                io::stdout().flush().unwrap();
+                let _ = io::stdout().flush();
             }
         }
     }

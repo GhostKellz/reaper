@@ -2,15 +2,11 @@ use crate::utils;
 use anyhow::Result;
 use futures::future::join_all;
 use owo_colors::OwoColorize;
-use reqwest::Client; // Use async client for parallel downloads
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::process::Command;
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
-
-// Keep blocking client for synchronous functions
-use reqwest::blocking::Client as BlockingClient;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
@@ -53,7 +49,7 @@ pub fn fetch_package_info(pkg: &str) -> Result<AurInfo, Box<dyn Error + Send + S
     }
 
     let url = format!("https://aur.archlinux.org/rpc/?v=5&type=info&arg[]={}", pkg);
-    let client = BlockingClient::new();
+    let client = crate::http::blocking_client();
     let resp = client.get(&url).send()?;
     let aur_resp: AurResponse = resp.json()?;
     if let Some(r) = aur_resp.results.into_iter().next() {
@@ -95,7 +91,7 @@ pub async fn search(query: &str) -> Result<Vec<SearchResult>, Box<dyn Error + Se
         "https://aur.archlinux.org/rpc/?v=5&type=search&arg={}",
         query
     );
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client.get(&url).send().await?;
     let aur_resp: AurResponse = resp.json().await?;
     let results: Vec<SearchResult> = aur_resp
@@ -135,7 +131,7 @@ pub fn aur_search_results(query: &str) -> Vec<AurResult> {
         "https://aur.archlinux.org/rpc/?v=5&type=search&arg={}",
         query
     );
-    if let Ok(resp) = reqwest::blocking::get(&url)
+    if let Ok(resp) = crate::http::blocking_client().get(&url).send()
         && let Ok(json) = resp.json::<AurResponse>()
     {
         // Cache the results
@@ -168,7 +164,7 @@ pub async fn get_pkgbuild_cached(pkg: &str) -> String {
         "https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h={}",
         pkg
     );
-    match reqwest::get(&url).await {
+    match crate::http::client().get(&url).send().await {
         Ok(resp) => resp.text().await.unwrap_or_default(),
         Err(_) => String::from("[reap] PKGBUILD not found."),
     }
@@ -196,7 +192,7 @@ pub async fn install(pkgs: Vec<&str>) -> Result<(), Box<dyn std::error::Error + 
 }
 
 /// Uninstall a package using pacman directly (no yay/paru fallback)
-pub fn uninstall(package: &str) {
+pub fn uninstall(package: &str) -> bool {
     println!(
         "[reap] Uninstalling {} (sudo pacman -R)...",
         package.yellow()
@@ -205,9 +201,18 @@ pub fn uninstall(package: &str) {
         .args(["pacman", "-R", package])
         .status();
     match status {
-        Ok(s) if s.success() => println!("[reap] Uninstalled {}.", package.green()),
-        Ok(_) => eprintln!("[reap] Uninstall failed for {}.", package.red()),
-        Err(e) => eprintln!("[reap] Failed to run pacman -R: {}", e),
+        Ok(s) if s.success() => {
+            println!("[reap] Uninstalled {}.", package.green());
+            true
+        }
+        Ok(_) => {
+            eprintln!("[reap] Uninstall failed for {}.", package.red());
+            false
+        }
+        Err(e) => {
+            eprintln!("[reap] Failed to run pacman -R: {}", e);
+            false
+        }
     }
 }
 
@@ -229,7 +234,7 @@ pub fn get_pkgbuild_preview(pkg: &str) -> String {
         "https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h={}",
         pkg
     );
-    if let Ok(resp) = reqwest::blocking::get(&url)
+    if let Ok(resp) = crate::http::blocking_client().get(&url).send()
         && let Ok(text) = resp.text()
     {
         // Cache in both layers
@@ -279,7 +284,7 @@ pub fn get_install_file_preview(pkg: &str, pkgbuild: &str) -> String {
         "https://aur.archlinux.org/cgit/aur.git/plain/{}?h={}",
         name, pkg
     );
-    if let Ok(resp) = reqwest::blocking::get(&url)
+    if let Ok(resp) = crate::http::blocking_client().get(&url).send()
         && let Ok(text) = resp.text()
     {
         return text;
@@ -371,8 +376,13 @@ pub async fn upgrade_all() -> Result<(), Box<dyn std::error::Error + Send + Sync
         tx_builder.add_package_change(change.clone());
     }
 
-    // Save the transaction
-    let record = tx_builder.complete();
+    // Classify the install result *before* finalizing so the recorded status
+    // reflects what actually happened (a failed upgrade must not be saved as
+    // Completed).
+    let record = match &res {
+        Ok(_) => tx_builder.complete(),
+        Err(e) => tx_builder.fail(e.to_string()),
+    };
     if let Err(e) = journal.save_transaction(&record) {
         eprintln!("[transaction] Warning: Failed to save: {}", e);
     } else {
@@ -380,19 +390,24 @@ pub async fn upgrade_all() -> Result<(), Box<dyn std::error::Error + Send + Sync
     }
 
     match res {
-        Ok(_) => println!("[reap] Upgrade complete."),
-        Err(e) => eprintln!("[reap] Upgrade failed: {}", e),
+        Ok(_) => {
+            println!("[reap] Upgrade complete.");
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("[reap] Upgrade failed: {}", e);
+            Err(e)
+        }
     }
-    Ok(())
 }
 
 /// Install a local package
-pub fn install_local(path: &str) {
+pub fn install_local(path: &str) -> bool {
     use std::path::Path;
     let file = Path::new(path);
     if !file.exists() {
         eprintln!("[reap] Local package file does not exist: {}", path.red());
-        return;
+        return false;
     }
     let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
     if !(ext == "zst" || path.ends_with(".pkg.tar.zst")) {
@@ -400,22 +415,30 @@ pub fn install_local(path: &str) {
             "[reap] Local package file must be a .zst or .pkg.tar.zst: {}",
             path.yellow()
         );
-        return;
+        return false;
     }
     println!(
         "[reap] Installing local package from {} (sudo pacman -U)...",
         path.yellow()
     );
-    let status = Command::new("sudo")
+    match Command::new("sudo")
         .arg("pacman")
         .arg("-U")
         .arg(path)
         .status()
-        .expect("Failed to run sudo pacman -U <file>");
-    if status.success() {
-        println!("[reap] Local install complete: {}.", path.green());
-    } else {
-        eprintln!("[reap] Local install failed: {}.", path.red());
+    {
+        Ok(s) if s.success() => {
+            println!("[reap] Local install complete: {}.", path.green());
+            true
+        }
+        Ok(_) => {
+            eprintln!("[reap] Local install failed: {}.", path.red());
+            false
+        }
+        Err(e) => {
+            eprintln!("[reap] Failed to run pacman -U: {}", e);
+            false
+        }
     }
 }
 
@@ -449,7 +472,7 @@ pub async fn parallel_search(
         queries.len()
     );
 
-    let client = Client::new();
+    let client = crate::http::client();
     let tasks: Vec<_> = queries
         .iter()
         .map(|query| {
@@ -528,7 +551,7 @@ pub async fn parallel_pkgbuild_fetch(
         packages.len()
     );
 
-    let client = Client::new();
+    let client = crate::http::client();
     let tasks: Vec<_> = packages
         .iter()
         .map(|pkg| {

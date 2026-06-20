@@ -1,9 +1,9 @@
 # Maintainer: GhostKellz <ckelley@ghostkellz.sh>
 pkgname=reaper
-pkgver=0.8.2
+pkgver=0.8.3
 pkgrel=1
 pkgdesc="Fast, async AUR helper written in Rust"
-arch=('x86_64' 'aarch64')
+arch=('x86_64')
 url="https://github.com/GhostKellz/reaper"
 license=('MIT')
 depends=('pacman' 'git')
@@ -11,24 +11,40 @@ optdepends=(
     'flatpak: Flatpak support'
     'gnupg: GPG signature verification'
 )
-makedepends=('rust' 'cargo')
+# git is also a runtime dependency, but VCS sources require it at fetch time, so
+# list it here explicitly to guarantee availability before the source download.
+# cmake is required to build aws-lc-sys (pulled in by rustls); it is not part of
+# base-devel, so a clean chroot needs it declared here.
+makedepends=('rust' 'cargo' 'git' 'cmake')
 provides=('reaper' 'reap')
 conflicts=('reaper-git')
-source=("$pkgname-$pkgver.tar.gz::https://github.com/GhostKellz/reaper/archive/v$pkgver.tar.gz")
+# Disable makepkg's global LTO: it injects -flto into CFLAGS, which makes the
+# aws-lc-sys C objects LTO-only bytecode that rust-lld cannot resolve at the
+# final link (undefined aws_lc_* symbols). Reap's own Rust LTO is unaffected.
+options=('!lto')
+# Pinned to the immutable release tag. VCS sources carry their integrity in the
+# git ref itself, so 'SKIP' here is the idiomatic value (not a disabled check)
+# and avoids breakage from GitHub re-compressing auto-generated tarballs.
+source=("$pkgname::git+$url.git#tag=v$pkgver")
 sha256sums=('SKIP')
 
 build() {
-    cd "$pkgname-$pkgver"
-    cargo build --release
+    cd "$pkgname"
+    # Build with the 'cache' feature for parity with the official install paths
+    # (release/install.sh and the Docker image); it gates AUR metadata caching.
+    cargo build --release --locked --features cache
 }
 
 check() {
-    cd "$pkgname-$pkgver"
-    cargo test --release
+    cd "$pkgname"
+    # Library unit tests only: they are hermetic, whereas the integration tests
+    # shell out to optional tools (flatpak) and live services (AUR/Flathub) that
+    # are not present in a clean build chroot.
+    cargo test --release --locked --lib --features cache
 }
 
 package() {
-    cd "$pkgname-$pkgver"
+    cd "$pkgname"
 
     # Install binary
     install -Dm755 target/release/reap "$pkgdir/usr/bin/reap"

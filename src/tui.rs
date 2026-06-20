@@ -188,13 +188,15 @@ impl InstallQueue {
         }
     }
     fn enqueue(&self, task: core::InstallTask) {
-        let mut tasks = self.tasks.lock().unwrap();
+        // Recover from a poisoned lock instead of panicking: the queued data is
+        // still valid even if another thread panicked while holding the lock.
+        let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         tasks.push(task);
     }
 
     #[allow(dead_code)]
     fn pop(&self) -> Option<core::InstallTask> {
-        let mut tasks = self.tasks.lock().unwrap();
+        let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         if !tasks.is_empty() {
             Some(tasks.remove(0))
         } else {
@@ -207,9 +209,12 @@ impl InstallQueue {
         let semaphore = Arc::new(Semaphore::new(4));
         let mut handles = Vec::new();
         let mut completed = 0;
-        let total = self.tasks.lock().unwrap().len();
+        let total = self.tasks.lock().unwrap_or_else(|e| e.into_inner()).len();
         while let Some(task) = self.pop() {
-            let permit = semaphore.clone().acquire_owned().await.unwrap();
+            let Ok(permit) = semaphore.clone().acquire_owned().await else {
+                log_pane.push("[tui] Install queue semaphore closed; stopping.");
+                break;
+            };
             let log_pane_task = Arc::clone(&log_pane);
             let backend = backend.to_string();
             handles.push(tokio::spawn(async move {
@@ -258,17 +263,17 @@ impl LogPane {
         }
     }
     pub fn push(&self, line: &str) {
-        let mut lines = self.lines.lock().unwrap();
+        let mut lines = self.lines.lock().unwrap_or_else(|e| e.into_inner());
         lines.push(line.to_string());
         if lines.len() > 1000 {
             lines.remove(0);
         }
     }
     pub fn get(&self) -> Vec<String> {
-        self.lines.lock().unwrap().clone()
+        self.lines.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
     pub fn clear(&self) {
-        let mut lines = self.lines.lock().unwrap();
+        let mut lines = self.lines.lock().unwrap_or_else(|e| e.into_inner());
         lines.clear();
     }
 }
@@ -345,9 +350,9 @@ fn restore_terminal(
 }
 
 /// Enhanced TUI with live monitoring, trust scores, and profile management
-pub async fn launch_tui() {
+pub async fn launch_tui() -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
-    let mut terminal = setup_terminal().expect("Failed to setup terminal");
+    let mut terminal = setup_terminal()?;
     let mut search_tab = SearchTab::new();
     let mut tab_idx = 0;
     let tab_titles = ["Search", "Queue", "Log", "Profiles", "System"];
@@ -361,82 +366,99 @@ pub async fn launch_tui() {
     let profile_manager = ProfileManager::new();
     let mut build_progress = BuildProgress::new();
 
+    // Capture any terminal error from the render/event loop so we can still
+    // restore the terminal before returning instead of panicking mid-screen.
+    let mut loop_result: Result<(), Box<dyn std::error::Error>> = Ok(());
     loop {
-        terminal
-            .draw(|f| {
-                let size = f.area();
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(3), // Tabs
-                        Constraint::Min(5),    // Main content
-                        Constraint::Length(7), // Bottom panel
-                        Constraint::Length(2), // Status bar
-                    ])
-                    .split(size);
+        if let Err(e) = terminal.draw(|f| {
+            let size = f.area();
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3), // Tabs
+                    Constraint::Min(5),    // Main content
+                    Constraint::Length(7), // Bottom panel
+                    Constraint::Length(2), // Status bar
+                ])
+                .split(size);
 
-                // Enhanced tabs with icons
-                let tabs = Tabs::new(tab_titles.iter().enumerate().map(|(i, title)| {
-                    let icon = match i {
-                        0 => "🔍 ",
-                        1 => "📦 ",
-                        2 => "📋 ",
-                        3 => "👤 ",
-                        4 => "🖥️ ",
-                        _ => "",
-                    };
-                    format!("{}{}", icon, title)
-                }))
-                .block(Block::default().borders(Borders::ALL).title("Reaper v0.8"))
-                .select(tab_idx)
-                .highlight_style(
-                    Style::default()
-                        .bg(Color::Blue)
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                );
-                f.render_widget(tabs, chunks[0]);
+            // Enhanced tabs with icons
+            let tabs = Tabs::new(tab_titles.iter().enumerate().map(|(i, title)| {
+                let icon = match i {
+                    0 => "🔍 ",
+                    1 => "📦 ",
+                    2 => "📋 ",
+                    3 => "👤 ",
+                    4 => "🖥️ ",
+                    _ => "",
+                };
+                format!("{}{}", icon, title)
+            }))
+            .block(Block::default().borders(Borders::ALL).title("Reaper v0.8"))
+            .select(tab_idx)
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Blue)
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            );
+            f.render_widget(tabs, chunks[0]);
 
-                match tab_idx {
-                    0 => {
-                        // Enhanced search tab with trust scores
-                        search_tab.render_with_trust(f, chunks[1], &trust_engine);
-                    }
-                    1 => {
-                        // Queue tab with progress bars
-                        render_queue_tab(f, chunks[1], &install_queue, &build_progress);
-                    }
-                    2 => {
-                        // Log tab with filtering
-                        render_log_tab(f, chunks[1], &log_pane, log_scroll);
-                    }
-                    3 => {
-                        // Profiles management tab
-                        render_profiles_tab(f, chunks[1], &profile_manager);
-                    }
-                    4 => {
-                        // System monitoring tab
-                        render_system_tab(f, chunks[1], &installed);
-                    }
-                    _ => {}
+            match tab_idx {
+                0 => {
+                    // Enhanced search tab with trust scores
+                    search_tab.render_with_trust(f, chunks[1], &trust_engine);
                 }
-
-                // Enhanced bottom panel with real-time stats
-                render_bottom_panel(f, chunks[2], &installed, &trust_engine);
-
-                // Status bar with current profile and system info
-                render_status_bar(f, chunks[3], &profile_manager);
-
-                if let Some(diff) = &diff_viewer {
-                    let area = Layout::default().split(f.area())[0];
-                    diff.render(f, area);
+                1 => {
+                    // Queue tab with progress bars
+                    render_queue_tab(f, chunks[1], &install_queue, &build_progress);
                 }
-            })
-            .unwrap();
+                2 => {
+                    // Log tab with filtering
+                    render_log_tab(f, chunks[1], &log_pane, log_scroll);
+                }
+                3 => {
+                    // Profiles management tab
+                    render_profiles_tab(f, chunks[1], &profile_manager);
+                }
+                4 => {
+                    // System monitoring tab
+                    render_system_tab(f, chunks[1], &installed);
+                }
+                _ => {}
+            }
 
-        if crossterm::event::poll(std::time::Duration::from_millis(100)).unwrap()
-            && let Event::Key(key) = event::read().unwrap()
-        {
+            // Enhanced bottom panel with real-time stats
+            render_bottom_panel(f, chunks[2], &installed, &trust_engine);
+
+            // Status bar with current profile and system info
+            render_status_bar(f, chunks[3], &profile_manager);
+
+            if let Some(diff) = &diff_viewer {
+                let area = Layout::default().split(f.area())[0];
+                diff.render(f, area);
+            }
+        }) {
+            loop_result = Err(e.into());
+            break;
+        }
+
+        let has_event = match crossterm::event::poll(std::time::Duration::from_millis(100)) {
+            Ok(v) => v,
+            Err(e) => {
+                loop_result = Err(e.into());
+                break;
+            }
+        };
+        if has_event {
+            let key = match event::read() {
+                Ok(Event::Key(key)) => key,
+                Ok(_) => continue,
+                Err(e) => {
+                    loop_result = Err(e.into());
+                    break;
+                }
+            };
             match key.code {
                 KeyCode::Char('q') | KeyCode::Esc => break,
                 KeyCode::Char('/') => {
@@ -500,14 +522,12 @@ pub async fn launch_tui() {
                         log_scroll += 1;
                     }
                 }
-                KeyCode::Enter => {
-                    if tab_idx == 0 && !search_tab.results.is_empty() {
-                        let selected = &search_tab.results[search_tab.selected];
-                        let task =
-                            core::InstallTask::new(selected.name.clone(), selected.source.clone());
-                        install_queue.enqueue(task);
-                        log_pane.push(&format!("[queue] Added {} to install queue", selected.name));
-                    }
+                KeyCode::Enter if tab_idx == 0 && !search_tab.results.is_empty() => {
+                    let selected = &search_tab.results[search_tab.selected];
+                    let task =
+                        core::InstallTask::new(selected.name.clone(), selected.source.clone());
+                    install_queue.enqueue(task);
+                    log_pane.push(&format!("[queue] Added {} to install queue", selected.name));
                 }
                 _ => {}
             }
@@ -517,8 +537,11 @@ pub async fn launch_tui() {
         build_progress.update().await;
     }
     let elapsed = start.elapsed();
+    // Always attempt to restore the terminal, even if the loop errored, so the
+    // user is never left in raw mode. Surface the first error encountered.
+    let restore_result = restore_terminal(&mut terminal);
     println!("[tui] Session duration: {:?}", elapsed);
-    restore_terminal(&mut terminal).expect("Failed to restore terminal");
+    loop_result.and(restore_result)
 }
 
 #[derive(Default)]
@@ -562,7 +585,7 @@ fn render_queue_tab(
     let queue_items: Vec<ListItem> = queue
         .tasks
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .iter()
         .map(|task| {
             let status = match task.source {

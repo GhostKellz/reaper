@@ -47,7 +47,7 @@ impl InteractiveManager {
         let prompt = format!("{} [{}]: ", message, if default { "Y/n" } else { "y/N" });
 
         print!("{}", prompt);
-        io::stdout().flush().unwrap();
+        let _ = io::stdout().flush();
 
         let mut input = String::new();
         if io::stdin().read_line(&mut input).is_ok() {
@@ -118,7 +118,7 @@ impl InteractiveManager {
             "https://aur.archlinux.org/rpc/?v=5&type=info&arg[]={}",
             package
         );
-        let resp = reqwest::get(&url).await?;
+        let resp = crate::http::client().get(&url).send().await?;
         let _ = resp.text().await?;
         Ok(())
     }
@@ -205,7 +205,7 @@ impl InteractiveManager {
         }
 
         print!("\nEnter your choice (1-{}): ", items.len());
-        io::stdout().flush().unwrap();
+        let _ = io::stdout().flush();
 
         let mut input = String::new();
         if io::stdin().read_line(&mut input).is_ok()

@@ -10,8 +10,8 @@ use crate::config::ProfileFile;
 /// presets (e.g., developer, gaming, minimal). Profile settings override
 /// the base config file when active.
 ///
-/// Profile files are stored in `~/.config/reaper/profiles/`.
-/// The active profile is tracked in `~/.config/reaper/profiles/.active`.
+/// Profile files are stored in `~/.config/reap/profiles/`.
+/// The active profile is tracked in `~/.config/reap/profiles/.active`.
 pub struct ProfileManager {
     profiles_dir: PathBuf,
 }

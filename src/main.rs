@@ -1,30 +1,11 @@
-mod aur;
-mod aur_cache;
-mod backend;
-mod cli;
-mod config;
-mod core;
-mod dpkg;
-mod enhanced_aur;
-mod flatpak;
-mod gpg;
-mod hooks;
-mod interactive;
-mod pacman;
-mod paths;
-mod profiles;
-mod tap;
-mod transaction;
-mod trust;
-mod tui;
-mod utils;
-mod version;
-
-use crate::backend::Backend;
-use crate::cli::{Commands, PacmanAction};
 use clap::Parser;
-use cli::Cli;
 use owo_colors::OwoColorize;
+use reap::backend::{self, Backend};
+use reap::cli::{self, Cli, Commands, PacmanAction};
+use reap::{
+    audit, aur, config, core, dpkg, enhanced_aur, flatpak, gpg, install_plan, interactive, pacman,
+    paths, pkgbuild_review, profiles, tap, transaction, trust, tui, utils,
+};
 
 #[tokio::main]
 async fn main() {
@@ -41,7 +22,9 @@ async fn main() {
 
     // Handle pacman-style flags first (e.g., -Syu, -Ss, -R)
     if let Some(action) = cli.resolve_pacman_flags() {
-        handle_pacman_action(action).await;
+        if !handle_pacman_action(action).await {
+            std::process::exit(1);
+        }
         return;
     }
 
@@ -59,6 +42,9 @@ async fn main() {
             let backend = backend::AurBackend::new();
             backend.audit(&pkg).await;
         }
+        Commands::Diff { pkg } => {
+            pkgbuild_review::render_diff(&pkg);
+        }
         Commands::Rollback { cmd } => {
             let journal = transaction::TransactionJournal::new();
             match cmd {
@@ -73,20 +59,29 @@ async fn main() {
                 cli::RollbackCmd::Show { txid } => match journal.load_transaction(&txid) {
                     Ok(record) => display_transaction_details(&record),
                     Err(e) => {
-                        eprintln!("[rollback] Transaction not found: {}", e);
+                        eprintln!("[rollback] {}", e);
+                        eprintln!(
+                            "[rollback] Run 'reap rollback list' to see available transactions."
+                        );
                         std::process::exit(1);
                     }
                 },
                 cli::RollbackCmd::DryRun { txid } => match journal.load_transaction(&txid) {
                     Ok(record) => display_rollback_preview(&record),
                     Err(e) => {
-                        eprintln!("[rollback] Transaction not found: {}", e);
+                        eprintln!("[rollback] {}", e);
+                        eprintln!(
+                            "[rollback] Run 'reap rollback list' to see available transactions."
+                        );
                         std::process::exit(1);
                     }
                 },
                 cli::RollbackCmd::Apply { txid, yes } => match journal.load_transaction(&txid) {
                     Ok(mut record) => {
-                        let plan = transaction::create_rollback_plan(&record);
+                        let plan = transaction::create_rollback_plan(
+                            &record,
+                            &transaction::artifact_search_dirs(),
+                        );
                         if plan.downgrades.is_empty()
                             && plan.reinstalls.is_empty()
                             && plan.removals.is_empty()
@@ -184,10 +179,13 @@ async fn main() {
                         if !yes {
                             print!("\nProceed with rollback? [y/N] ");
                             use std::io::{self, Write};
-                            io::stdout().flush().unwrap();
+                            let _ = io::stdout().flush();
                             let mut input = String::new();
-                            io::stdin().read_line(&mut input).unwrap();
-                            if !input.trim().eq_ignore_ascii_case("y") {
+                            // Treat an unreadable stdin (closed pipe, non-interactive
+                            // context) as a decline rather than crashing.
+                            if io::stdin().read_line(&mut input).is_err()
+                                || !input.trim().eq_ignore_ascii_case("y")
+                            {
                                 println!("[rollback] Aborted.");
                                 return;
                             }
@@ -260,15 +258,22 @@ async fn main() {
                         }
                     }
                     Err(e) => {
-                        eprintln!("[rollback] Transaction not found: {}", e);
+                        eprintln!("[rollback] {}", e);
+                        eprintln!(
+                            "[rollback] Run 'reap rollback list' to see available transactions."
+                        );
                         std::process::exit(1);
                     }
                 },
             }
         }
-        Commands::SyncDb => core::handle_sync_db(),
+        Commands::SyncDb => {
+            if !core::handle_sync_db() {
+                std::process::exit(1);
+            }
+        }
         Commands::Pin { pkg } => {
-            if let Err(e) = crate::utils::pin_package(&pkg) {
+            if let Err(e) = reap::utils::pin_package(&pkg) {
                 eprintln!("[reap] Pin failed: {}", e);
             } else {
                 println!("[reap] Pinned {}", pkg);
@@ -276,7 +281,10 @@ async fn main() {
         }
         Commands::Tui => {
             let _config = config::Config::load();
-            tokio::spawn(crate::tui::launch_tui()).await.unwrap();
+            if let Err(e) = reap::tui::launch_tui().await {
+                eprintln!("[tui] Terminal error: {}", e);
+                std::process::exit(1);
+            }
         }
         Commands::Profile { cmd } => {
             let profile_manager = profiles::ProfileManager::new();
@@ -381,9 +389,9 @@ async fn main() {
                         scores.push((pkg.to_string(), score));
                     }
 
-                    // Sort by score (lowest first - most concerning)
-                    scores
-                        .sort_by(|a, b| a.1.overall_score.partial_cmp(&b.1.overall_score).unwrap());
+                    // Sort by score (lowest first - most concerning). Use total
+                    // ordering so a NaN score can never panic the sort.
+                    scores.sort_by(|a, b| a.1.overall_score.total_cmp(&b.1.overall_score));
 
                     println!("{:<30} {:>8} {:>8} Flags", "Package", "Score", "Votes");
                     println!("{}", "-".repeat(70));
@@ -501,7 +509,7 @@ async fn main() {
                     }
 
                     // Cache statistics
-                    let cache_dir = crate::paths::trust_dir();
+                    let cache_dir = reap::paths::trust_dir();
                     let mut cached_count = 0usize;
                     let mut stale_count = 0usize;
                     if let Ok(entries) = std::fs::read_dir(&cache_dir) {
@@ -528,7 +536,42 @@ async fn main() {
                     );
                 }
                 cli::TrustCmd::Update => {
-                    println!("[trust] Updating trust database...");
+                    println!("[trust] Refreshing trust scores for installed AUR packages...\n");
+                    let installed = core::get_installed_packages();
+                    let aur_packages: Vec<_> = installed
+                        .iter()
+                        .filter(|(_, source)| matches!(source, core::Source::Aur))
+                        .collect();
+
+                    if aur_packages.is_empty() {
+                        println!("[trust] No AUR packages installed.");
+                        return;
+                    }
+
+                    let mut refreshed = 0usize;
+                    let mut low_trust = Vec::new();
+                    for (pkg, source) in &aur_packages {
+                        // Invalidate first: compute_trust_score returns the cached
+                        // score early when present, so a stale entry would not refresh.
+                        trust_engine.invalidate_cache(pkg);
+                        let score = trust_engine.compute_trust_score(pkg, source).await;
+                        refreshed += 1;
+                        if score.overall_score < 5.0 {
+                            low_trust.push((pkg.to_string(), score.overall_score));
+                        }
+                        println!("  ✓ {} ({:.1}/10)", pkg, score.overall_score);
+                    }
+
+                    println!("\n[trust] Refreshed {} package(s).", refreshed);
+                    if !low_trust.is_empty() {
+                        println!(
+                            "[trust] ⚠️  {} package(s) below trust threshold:",
+                            low_trust.len()
+                        );
+                        for (pkg, score) in &low_trust {
+                            println!("  {} ({:.1}/10)", pkg, score);
+                        }
+                    }
                 }
             }
         }
@@ -537,10 +580,31 @@ async fn main() {
             repo: _,
             binary_only: _,
             diff,
+            fast,
+            strict,
+            dry_run,
+            noconfirm,
+            skipreview,
             insecure,
         } => {
+            // Auto-sync enabled taps before resolving packages (interval-gated;
+            // respects the auto_sync setting, verifies commits in advisory mode).
+            let _ = tap::sync_enabled_taps();
+
             let config = std::sync::Arc::new(config::Config::load());
             let log = std::sync::Arc::new(tui::LogPane::default());
+            let skip_confirm = noconfirm || config.noconfirm;
+            let mut reviews = Vec::new();
+
+            if fast {
+                eprintln!("[perf] Fast mode enabled: optional preflight checks may be skipped");
+            }
+
+            if strict {
+                eprintln!(
+                    "[security] Strict mode enabled: trusted signatures are required where available"
+                );
+            }
 
             if insecure {
                 eprintln!(
@@ -552,25 +616,123 @@ async fn main() {
                 // Show PKGBUILD diff before install
                 core::show_pkgbuild_diff(&pkg);
 
-                if !interactive::InteractiveManager::confirm_action(
-                    "Continue with installation?",
-                    true,
-                ) {
+                if !dry_run
+                    && !skip_confirm
+                    && !interactive::InteractiveManager::confirm_action(
+                        "Continue with installation?",
+                        true,
+                    )
+                {
                     return;
                 }
-            }
-
-            // Backup package state before install
-            if let Err(e) = core::backup_package_state(&pkg) {
-                eprintln!("[backup] Warning: Failed to backup package state: {}", e);
             }
 
             // Use priority-based install with insecure flag
             let options = core::InstallOptions {
                 insecure,
+                fast_mode: fast,
+                strict_signatures: strict || config.security.strict_mode,
                 ..Default::default()
             };
-            core::install_with_priority(&pkg, config, true, log, &options).await;
+
+            if config.auto_resolve_deps || dry_run {
+                match install_plan::create_install_plan(std::slice::from_ref(&pkg), &config).await {
+                    Ok(plan) => {
+                        plan.print_summary();
+                        if plan.is_blocked() {
+                            eprintln!(
+                                "[plan] Install plan has unresolved dependencies or conflicts."
+                            );
+                            std::process::exit(1);
+                        }
+                        // Always run the structured review so the infostealer
+                        // hard-block is enforced even under --skipreview; only
+                        // the verbose findings and the high-risk prompt are
+                        // gated by --skipreview.
+                        reviews = pkgbuild_review::review_plan(&plan);
+                        if !skipreview {
+                            pkgbuild_review::print_reviews(&reviews);
+                        }
+                        if enforce_infostealer_block(&reviews, insecure) {
+                            std::process::exit(2);
+                        }
+                        if !skipreview
+                            && !dry_run
+                            && pkgbuild_review::has_high_risk_review(&reviews)
+                            && !skip_confirm
+                            && !interactive::InteractiveManager::confirm_action(
+                                "High-risk PKGBUILD findings detected. Continue?",
+                                false,
+                            )
+                        {
+                            return;
+                        }
+                        if dry_run {
+                            return;
+                        }
+                        if !skip_confirm
+                            && !interactive::InteractiveManager::confirm_action(
+                                "Proceed with planned installation?",
+                                true,
+                            )
+                        {
+                            return;
+                        }
+                        for dep in plan.aur_dependency_steps() {
+                            let mut dep_options = options.clone();
+                            dep_options.asdeps = true;
+                            println!("[plan] Installing AUR dependency {}...", dep.name);
+                            if let Err(e) = core::install_with_priority(
+                                &dep.name,
+                                config.clone(),
+                                true,
+                                log.clone(),
+                                &dep_options,
+                            )
+                            .await
+                            {
+                                eprintln!(
+                                    "[plan] Failed to install AUR dependency {}: {}",
+                                    dep.name, e
+                                );
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[plan] Failed to create install plan: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+
+            if dry_run {
+                return;
+            }
+
+            if fast {
+                eprintln!("[backup] Skipping pre-install backup due to --fast");
+            } else {
+                // Backup package state before install
+                if let Err(e) = core::backup_package_state(&pkg) {
+                    eprintln!("[backup] Warning: Failed to backup package state: {}", e);
+                }
+            }
+
+            match core::install_with_priority(&pkg, config, true, log, &options).await {
+                Ok(()) => {
+                    if let Err(e) = pkgbuild_review::record_review_baselines(&reviews) {
+                        eprintln!(
+                            "[review] Warning: failed to record PKGBUILD review state: {}",
+                            e
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[install] Failed to install {}: {}", pkg, e);
+                    std::process::exit(1);
+                }
+            }
         }
 
         Commands::Rate {
@@ -627,33 +789,142 @@ async fn main() {
                 }
             }
         }
-        Commands::BatchInstall { pkgs, parallel } => {
+        Commands::BatchInstall {
+            pkgs,
+            parallel,
+            dry_run,
+            noconfirm,
+            skipreview,
+        } => {
             let config = std::sync::Arc::new(config::Config::load());
             let log = std::sync::Arc::new(tui::LogPane::default());
+            let skip_confirm = noconfirm || config.noconfirm;
+            let mut reviews = Vec::new();
 
-            if parallel {
+            if config.auto_resolve_deps || dry_run {
+                match install_plan::create_install_plan(&pkgs, &config).await {
+                    Ok(plan) => {
+                        plan.print_summary();
+                        if plan.is_blocked() {
+                            eprintln!(
+                                "[plan] Batch install plan has unresolved dependencies or conflicts."
+                            );
+                            std::process::exit(1);
+                        }
+                        // Always review so the infostealer hard-block applies
+                        // even under --skipreview. Batch install has no
+                        // --insecure flag, so the block cannot be overridden.
+                        reviews = pkgbuild_review::review_plan(&plan);
+                        if !skipreview {
+                            pkgbuild_review::print_reviews(&reviews);
+                        }
+                        if enforce_infostealer_block(&reviews, false) {
+                            std::process::exit(2);
+                        }
+                        if !skipreview
+                            && !dry_run
+                            && pkgbuild_review::has_high_risk_review(&reviews)
+                            && !skip_confirm
+                            && !interactive::InteractiveManager::confirm_action(
+                                "High-risk PKGBUILD findings detected. Continue?",
+                                false,
+                            )
+                        {
+                            return;
+                        }
+                        if dry_run {
+                            return;
+                        }
+                        if !skip_confirm
+                            && !interactive::InteractiveManager::confirm_action(
+                                "Proceed with planned batch installation?",
+                                true,
+                            )
+                        {
+                            return;
+                        }
+                        for dep in plan.aur_dependency_steps() {
+                            let dep_options = core::InstallOptions {
+                                asdeps: true,
+                                ..Default::default()
+                            };
+                            println!("[plan] Installing AUR dependency {}...", dep.name);
+                            if let Err(e) = core::install_with_priority(
+                                &dep.name,
+                                config.clone(),
+                                true,
+                                log.clone(),
+                                &dep_options,
+                            )
+                            .await
+                            {
+                                eprintln!(
+                                    "[plan] Failed to install AUR dependency {}: {}",
+                                    dep.name, e
+                                );
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[plan] Failed to create batch install plan: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+
+            let failures = if parallel {
                 log.push(&format!(
                     "[batch] Installing {} packages in parallel",
                     pkgs.len()
                 ));
-                core::parallel_install(&pkgs, config, log).await;
+                core::parallel_install(&pkgs, config, log).await
             } else {
+                let mut failures = Vec::new();
                 for pkg in pkgs {
                     log.push(&format!("[batch] Installing {}", pkg));
                     let options = core::InstallOptions::default();
-                    core::install_with_priority(&pkg, config.clone(), true, log.clone(), &options)
-                        .await;
+                    if let Err(e) = core::install_with_priority(
+                        &pkg,
+                        config.clone(),
+                        true,
+                        log.clone(),
+                        &options,
+                    )
+                    .await
+                    {
+                        eprintln!("[batch] Failed to install {}: {}", pkg, e);
+                        failures.push(pkg);
+                    }
                 }
+                failures
+            };
+            if failures.is_empty() {
+                if let Err(e) = pkgbuild_review::record_review_baselines(&reviews) {
+                    eprintln!(
+                        "[review] Warning: failed to record PKGBUILD review state: {}",
+                        e
+                    );
+                }
+            } else {
+                eprintln!(
+                    "[batch] {} package(s) failed: {:?}",
+                    failures.len(),
+                    failures
+                );
+                std::process::exit(1);
             }
         }
         Commands::Remove { pkgs } => {
             let interactive = interactive::InteractiveManager::new();
-            if interactive.confirm_removal(&pkgs) {
-                core::handle_removal(&pkgs);
+            if interactive.confirm_removal(&pkgs) && !core::handle_removal(&pkgs) {
+                std::process::exit(1);
             }
         }
         Commands::Local { pkgs } => {
-            core::handle_local_install(&pkgs);
+            if !core::handle_local_install(&pkgs) {
+                std::process::exit(1);
+            }
         }
         Commands::Search { terms } => {
             core::handle_search(&terms);
@@ -662,9 +933,13 @@ async fn main() {
             core::handle_update();
         }
         Commands::Upgrade { parallel } => {
-            core::handle_upgrade(parallel);
+            let _ = tap::sync_enabled_taps();
+            if !core::handle_upgrade(parallel) {
+                std::process::exit(1);
+            }
         }
         Commands::ParallelUpgrade { pkgs } => {
+            let _ = tap::sync_enabled_taps();
             let config = std::sync::Arc::new(config::Config::load());
             let log = std::sync::Arc::new(tui::LogPane::default());
 
@@ -672,10 +947,21 @@ async fn main() {
                 "[parallel] Upgrading {} packages in parallel",
                 pkgs.len()
             ));
-            core::parallel_upgrade(&pkgs, config, log).await;
+            let failures = core::parallel_upgrade(&pkgs, config, log).await;
+            if !failures.is_empty() {
+                eprintln!(
+                    "[parallel] {} upgrade(s) failed: {:?}",
+                    failures.len(),
+                    failures
+                );
+                std::process::exit(1);
+            }
         }
         Commands::UpgradeAll => {
-            core::handle_upgrade_all();
+            let _ = tap::sync_enabled_taps();
+            if !core::handle_upgrade_all() {
+                std::process::exit(1);
+            }
         }
         Commands::FlatpakUpgrade => {
             if !flatpak::is_available() {
@@ -688,11 +974,17 @@ async fn main() {
             }
         }
         Commands::Clean => {
-            core::handle_clean();
+            let mut ok = core::handle_clean();
             // Also clean cache using utils
             match utils::clean_cache() {
                 Ok(msg) => println!("[clean] {}", msg),
-                Err(e) => eprintln!("[clean] Error: {}", e),
+                Err(e) => {
+                    eprintln!("[clean] Error: {}", e);
+                    ok = false;
+                }
+            }
+            if !ok {
+                std::process::exit(1);
             }
         }
         Commands::Doctor => {
@@ -748,24 +1040,39 @@ async fn main() {
         },
         Commands::Security { cmd } => match cmd {
             cli::SecurityCmd::Audit { pkg } => {
-                println!("[security] Auditing package: {}", pkg);
-                let pkgbuild = aur::get_pkgbuild_preview(&pkg);
-                let install_hook = aur::get_install_file_preview(&pkg, &pkgbuild);
+                // Accept either an AUR package name or a local PKGBUILD path.
+                let (label, pkgbuild, install_hook) = if std::path::Path::new(&pkg).is_file() {
+                    let contents = std::fs::read_to_string(&pkg).unwrap_or_default();
+                    (pkg.clone(), contents, String::new())
+                } else {
+                    let pkgbuild = aur::get_pkgbuild_preview(&pkg);
+                    let hook = aur::get_install_file_preview(&pkg, &pkgbuild);
+                    (pkg.clone(), pkgbuild, hook)
+                };
+                println!("[security] Auditing: {}", label);
                 if !install_hook.is_empty() {
                     println!("[security] Including .install hook in scan");
                 }
-                let audit_input = format!("{}\n{}", pkgbuild, install_hook);
-                let (warnings, risk_score) = utils::audit_pkgbuild(&audit_input);
 
-                if warnings.is_empty() {
-                    println!("✅ Package {} passed security audit", pkg);
+                let report = audit::audit(&pkgbuild, &install_hook);
+                if report.findings.is_empty() {
+                    println!("✅ {} passed security audit", label);
                 } else {
-                    println!("⚠️ Package {} security audit findings:", pkg);
-                    for warning in warnings {
-                        println!("  {}", warning);
+                    println!("⚠️ {} security audit findings:", label);
+                    for finding in &report.findings {
+                        println!("  {}", finding.describe());
                     }
                 }
-                println!("🛡️ Security risk score: {}", risk_score);
+                println!("🛡️ Security risk score: {}", report.risk_score);
+                println!(
+                    "🕵️ Infostealer confidence: {}",
+                    report.infostealer_confidence.label()
+                );
+                if report.is_infostealer_block() {
+                    println!(
+                        "⛔ This package would be BLOCKED on install by default (override: --insecure)"
+                    );
+                }
             }
             cli::SecurityCmd::ScanAll => {
                 println!("[security] Scanning all installed AUR packages...\n");
@@ -789,17 +1096,24 @@ async fn main() {
                     aur_packages.len()
                 );
 
+                let mut infostealer_packages = Vec::new();
                 for (pkg, _source) in &aur_packages {
                     let pkgbuild = aur::get_pkgbuild_preview(pkg);
                     let install_hook = aur::get_install_file_preview(pkg, &pkgbuild);
-                    let audit_input = format!("{}\n{}", pkgbuild, install_hook);
-                    let (warnings, risk_score) = utils::audit_pkgbuild(&audit_input);
+                    let report = audit::audit(&pkgbuild, &install_hook);
                     scanned_count += 1;
 
-                    if risk_score > 15 {
-                        risky_packages.push((pkg.to_string(), risk_score, warnings.clone()));
+                    if report.is_infostealer_block() {
+                        infostealer_packages.push(pkg.to_string());
                     }
-                    total_risk += risk_score;
+                    if report.risk_score > 15 {
+                        risky_packages.push((
+                            pkg.to_string(),
+                            report.risk_score,
+                            report.warnings(),
+                        ));
+                    }
+                    total_risk += report.risk_score;
                 }
 
                 println!("\n🛡️ Security Scan Results");
@@ -815,6 +1129,18 @@ async fn main() {
                     }
                 );
                 println!("  High-risk packages: {}", risky_packages.len());
+                println!(
+                    "  Infostealer-flagged packages: {}",
+                    infostealer_packages.len()
+                );
+
+                if !infostealer_packages.is_empty() {
+                    println!("\n⛔ High-confidence infostealer behavior detected:");
+                    println!("{}", "-".repeat(50));
+                    for pkg in &infostealer_packages {
+                        println!("  • {}", pkg);
+                    }
+                }
 
                 if !risky_packages.is_empty() {
                     println!("\n⚠️  High-Risk Packages (score > 15):");
@@ -833,10 +1159,19 @@ async fn main() {
                 }
             }
             cli::SecurityCmd::Stats => {
-                println!("[security] Security statistics:");
-                println!("  Security rules: 38 patterns");
-                println!("  Domain blacklist: 7 entries");
-                println!("  Credential patterns: 10 patterns");
+                let counts = audit::pattern_counts();
+                println!("[security] Detection rules (built-in):");
+                println!("  Risky-command patterns: {}", counts.risky);
+                println!("  Supply-chain patterns: {}", counts.supply_chain);
+                println!("  Suspicious domains: {}", counts.domains);
+                println!("  Credential patterns: {}", counts.credentials);
+                println!(
+                    "  Infostealer sensitive-path indicators: {}",
+                    counts.infostealer_sensitive
+                );
+                println!("  Exfiltration indicators: {}", counts.exfil);
+                println!("  Source-integrity rules: {}", counts.source_rules);
+                println!("  Total: {}", counts.total());
             }
             cli::SecurityCmd::UpdateRules => {
                 println!("[security] Security rules are built-in and updated with releases");
@@ -871,10 +1206,6 @@ async fn main() {
                     Ok(()) => println!("[reap] PKGBUILD signature verified"),
                     Err(e) => eprintln!("[reap] PKGBUILD verification failed: {}", e),
                 }
-            }
-            cli::GpgCmd::SetKeyserver { url } => {
-                println!("Setting GPG keyserver: {}", url);
-                utils::cli_set_keyserver(&url);
             }
             cli::GpgCmd::CheckKeyserver { url } => {
                 println!("Checking GPG keyserver: {}", url);
@@ -1010,39 +1341,39 @@ async fn main() {
                 url,
                 priority,
             } => {
-                crate::tap::add_or_update_tap(&name, &url, Some(priority as u8), true);
+                reap::tap::add_or_update_tap(&name, &url, Some(priority as u8), true);
             }
             cli::TapCmd::Remove { name } => {
-                crate::tap::remove_tap(&name);
+                reap::tap::remove_tap(&name);
             }
             cli::TapCmd::Enable { name } => {
-                crate::tap::set_tap_enabled(&name, true);
+                reap::tap::set_tap_enabled(&name, true);
             }
             cli::TapCmd::Disable { name } => {
-                crate::tap::set_tap_enabled(&name, false);
+                reap::tap::set_tap_enabled(&name, false);
             }
             cli::TapCmd::Update => {
-                crate::tap::sync_taps();
+                reap::tap::sync_taps();
                 // Invalidate trust cache for all synced taps
                 let trust_engine = trust::TrustEngine::new();
-                for tap in crate::tap::discover_taps() {
+                for tap in reap::tap::discover_taps() {
                     if tap.enabled {
                         trust_engine.invalidate_tap_cache(&tap.name);
                     }
                 }
             }
             cli::TapCmd::Sync => {
-                crate::tap::sync_taps();
+                reap::tap::sync_taps();
                 // Invalidate trust cache for all synced taps
                 let trust_engine = trust::TrustEngine::new();
-                for tap in crate::tap::discover_taps() {
+                for tap in reap::tap::discover_taps() {
                     if tap.enabled {
                         trust_engine.invalidate_tap_cache(&tap.name);
                     }
                 }
             }
             cli::TapCmd::List => {
-                crate::tap::list_taps();
+                reap::tap::list_taps();
             }
         },
         Commands::Completion { shell } => {
@@ -1050,7 +1381,10 @@ async fn main() {
         }
         Commands::Backup => match utils::backup_config() {
             Ok(_) => println!("[reap] Config backup complete."),
-            Err(e) => eprintln!("[reap] Config backup failed: {}", e),
+            Err(e) => {
+                eprintln!("[reap] Config backup failed: {}", e);
+                std::process::exit(1);
+            }
         },
         Commands::Orphan { remove, all } => {
             core::handle_orphan(remove, all);
@@ -1060,17 +1394,17 @@ async fn main() {
                 config::show_config();
             }
             cli::ConfigCmd::Set { key, value } => {
-                crate::config::set_config_key(&key, &value);
+                reap::config::set_config_key(&key, &value);
             }
             cli::ConfigCmd::Get { key } => {
-                if let Some(val) = crate::config::get_config_key(&key) {
+                if let Some(val) = reap::config::get_config_key(&key) {
                     println!("{} = {}", key, val);
                 } else {
                     println!("Key '{}' not found in config.", key);
                 }
             }
             cli::ConfigCmd::Reset => {
-                crate::config::reset_config();
+                reap::config::reset_config();
             }
         },
         Commands::Dpkg { cmd } => match cmd {
@@ -1096,38 +1430,54 @@ async fn main() {
 }
 
 /// Handle pacman-style flag combinations (e.g., -Syu, -Ss, -R)
-async fn handle_pacman_action(action: PacmanAction) {
+/// Dispatch a pacman-style action. Returns `true` on success, `false` if any
+/// underlying operation failed (so the caller can set a nonzero exit code).
+async fn handle_pacman_action(action: PacmanAction) -> bool {
     match action {
         PacmanAction::SyncUpgrade => {
             // -Syu: sync database and upgrade all
             println!("[reap] Syncing databases and upgrading...");
-            core::handle_sync_db();
+            if !core::handle_sync_db() {
+                return false;
+            }
             if let Err(e) = aur::upgrade_all().await {
                 eprintln!("[reap] Upgrade failed: {}", e);
+                return false;
             }
+            true
         }
         PacmanAction::RefreshDb => {
             // -Sy: sync database
             println!("[reap] Syncing package databases...");
-            core::handle_sync_db();
+            core::handle_sync_db()
         }
         PacmanAction::Upgrade => {
             // -Su: upgrade all
             println!("[reap] Upgrading all packages...");
             if let Err(e) = aur::upgrade_all().await {
                 eprintln!("[reap] Upgrade failed: {}", e);
+                return false;
             }
+            true
         }
         PacmanAction::Install(pkgs) => {
             // -S <pkgs>: install packages
             let config = std::sync::Arc::new(config::Config::load());
             let log = std::sync::Arc::new(tui::LogPane::default());
 
+            let mut all_ok = true;
             for pkg in pkgs {
                 println!("[reap] Installing {}...", pkg);
                 let opts = core::InstallOptions::default();
-                core::install_with_priority(&pkg, config.clone(), false, log.clone(), &opts).await;
+                if let Err(e) =
+                    core::install_with_priority(&pkg, config.clone(), false, log.clone(), &opts)
+                        .await
+                {
+                    eprintln!("[reap] Install failed for {}: {}", pkg, e);
+                    all_ok = false;
+                }
             }
+            all_ok
         }
         PacmanAction::Search(terms) => {
             // -Ss: search packages
@@ -1143,11 +1493,12 @@ async fn handle_pacman_action(action: PacmanAction) {
                     r.description
                 );
             }
+            true
         }
         PacmanAction::Remove(pkgs) => {
             // -R: remove packages
             let pkg_refs: Vec<String> = pkgs.iter().map(|s| s.to_string()).collect();
-            pacman::remove_with_options(&pkg_refs, false);
+            pacman::remove_with_options(&pkg_refs, false)
         }
         PacmanAction::QueryUpgradable => {
             // -Qu: show packages that can be upgraded
@@ -1165,6 +1516,7 @@ async fn handle_pacman_action(action: PacmanAction) {
                     }
                 }
             }
+            true
         }
         PacmanAction::QueryInstalled(pkgs) => {
             // -Q <pkg>: check if installed
@@ -1175,11 +1527,45 @@ async fn handle_pacman_action(action: PacmanAction) {
                     println!("Package '{}' is not installed", pkg);
                 }
             }
+            true
         }
         PacmanAction::CleanCache => {
             // -Sc: clean cache
-            core::handle_clean();
+            core::handle_clean()
         }
+    }
+}
+
+/// Enforce the default infostealer hard-block.
+///
+/// High-confidence infostealer evidence (a sensitive-credential read correlated
+/// with a network-exfiltration mechanism) stops the install by default. This is
+/// the one place reaper overrides the user automatically; the override is
+/// intentionally limited to `--insecure` and is NOT bypassed by `--skipreview`
+/// or `--noconfirm`. Returns `true` when the caller must abort.
+fn enforce_infostealer_block(reviews: &[pkgbuild_review::PkgbuildReview], insecure: bool) -> bool {
+    if !pkgbuild_review::has_infostealer_block(reviews) {
+        return false;
+    }
+    let blocked = pkgbuild_review::infostealer_blocked_packages(reviews).join(", ");
+    if insecure {
+        eprintln!(
+            "[security] ⚠️  --insecure set: overriding infostealer block for {}",
+            blocked
+        );
+        false
+    } else {
+        eprintln!(
+            "[security] ⛔ BLOCKED: high-confidence infostealer behavior detected in {}",
+            blocked
+        );
+        eprintln!(
+            "[security] These PKGBUILDs read sensitive credentials and exfiltrate them over the network."
+        );
+        eprintln!(
+            "[security] Installation refused. If you have manually verified this is a false positive, re-run with --insecure."
+        );
+        true
     }
 }
 
@@ -1362,52 +1748,29 @@ fn display_rollback_preview(record: &transaction::TransactionRecord) {
     println!("{}", "Planned actions:".bold());
     println!();
 
-    let mut downgrades = Vec::new();
-    let mut reinstalls = Vec::new();
-    let mut removals = Vec::new();
-    let mut unavailable = Vec::new();
+    // Drive the preview from the same plan the apply path executes, so the
+    // dry-run and the real rollback never disagree (e.g. artifacts that are
+    // only discoverable via the pacman cache fallback in create_rollback_plan).
+    let plan = transaction::create_rollback_plan(record, &transaction::artifact_search_dirs());
+    let downgrades = &plan.downgrades;
+    let reinstalls = &plan.reinstalls;
+    let removals = &plan.removals;
+    let unavailable = &plan.unavailable;
 
-    for change in &record.affected_packages {
-        let has_artifact = change
-            .previous_artifact
-            .as_ref()
-            .map(|p| p.exists())
-            .unwrap_or(false);
-
-        match change.change_type {
-            transaction::PackageChangeType::Install
-            | transaction::PackageChangeType::DependencyInstall => {
-                removals.push(&change.name);
-            }
-            transaction::PackageChangeType::Remove => {
-                if has_artifact {
-                    reinstalls.push((
-                        change.name.as_str(),
-                        change.previous_version.as_deref().unwrap_or("?"),
-                    ));
-                } else {
-                    unavailable.push((change.name.as_str(), "artifact missing"));
-                }
-            }
-            transaction::PackageChangeType::Upgrade
-            | transaction::PackageChangeType::Downgrade
-            | transaction::PackageChangeType::Reinstall => {
-                if has_artifact {
-                    downgrades.push((
-                        change.name.as_str(),
-                        change.new_version.as_deref().unwrap_or("?"),
-                        change.previous_version.as_deref().unwrap_or("?"),
-                    ));
-                } else {
-                    unavailable.push((change.name.as_str(), "artifact missing"));
-                }
-            }
-        }
-    }
+    // Look up the post-transaction version for the downgrade arrow display.
+    let new_version_of = |name: &str| -> String {
+        record
+            .affected_packages
+            .iter()
+            .find(|c| c.name == name)
+            .and_then(|c| c.new_version.clone())
+            .unwrap_or_else(|| "?".to_string())
+    };
 
     if !downgrades.is_empty() {
         println!("{} Packages to downgrade:", "DOWN".yellow());
-        for (name, from, to) in &downgrades {
+        for (name, to, _artifact) in downgrades {
+            let from = new_version_of(name);
             println!("    {} {} -> {}", name.bold(), from.red(), to.green());
         }
         println!();
@@ -1415,7 +1778,7 @@ fn display_rollback_preview(record: &transaction::TransactionRecord) {
 
     if !reinstalls.is_empty() {
         println!("{} Packages to reinstall:", "INST".cyan());
-        for (name, ver) in &reinstalls {
+        for (name, ver, _artifact) in reinstalls {
             println!("    {} {}", name.bold(), ver.green());
         }
         println!();
@@ -1423,7 +1786,7 @@ fn display_rollback_preview(record: &transaction::TransactionRecord) {
 
     if !removals.is_empty() {
         println!("{} Packages to remove:", "DEL".red());
-        for name in &removals {
+        for name in removals {
             println!("    {}", name.bold());
         }
         println!();
@@ -1431,14 +1794,11 @@ fn display_rollback_preview(record: &transaction::TransactionRecord) {
 
     if !unavailable.is_empty() {
         println!("{} Cannot be rolled back:", "WARN".yellow());
-        for (name, reason) in &unavailable {
+        for (name, reason) in unavailable {
             println!("    {} - {}", name.bold(), reason);
         }
         println!();
     }
-
-    // Get the full rollback plan for analysis
-    let plan = transaction::create_rollback_plan(record);
 
     // Show analysis warnings
     if plan.has_warnings() {

@@ -38,11 +38,9 @@ pub struct TrustScore {
 pub enum SecurityFlag {
     UnverifiedSignature,    // No valid PGP signature
     UnknownPublisher,       // Publisher not verified
-    RecentVulnerability,    // Known security issues
     SuspiciousFiles,        // Suspicious file operations
     NetworkAccess,          // Makes network requests
     SystemAccess,           // Requires system permissions
-    OutdatedDependencies,   // Dependencies have vulnerabilities
 }
 ```
 

@@ -59,8 +59,8 @@ benchmark() {
 # Clear caches for fair comparison
 clear_caches() {
     echo -e "${YELLOW}Clearing caches...${NC}"
-    rm -rf ~/.cache/reaper/pkgbuild/* 2>/dev/null || true
-    rm -rf ~/.cache/reaper/search/* 2>/dev/null || true
+    rm -rf ~/.cache/reap/pkgbuilds/* 2>/dev/null || true
+    rm -rf ~/.cache/reap/search/* 2>/dev/null || true
     rm -rf ~/.cache/paru/clone/* 2>/dev/null || true
     echo ""
 }

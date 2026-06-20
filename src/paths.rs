@@ -110,6 +110,11 @@ pub fn pkgbuild_cache_dir() -> PathBuf {
     CACHE_DIR.join("pkgbuilds")
 }
 
+/// PKGBUILD review baselines: ~/.local/share/reap/reviews/
+pub fn review_dir() -> PathBuf {
+    DATA_DIR.join("reviews")
+}
+
 /// Search cache directory: ~/.cache/reap/search/
 pub fn search_cache_dir() -> PathBuf {
     CACHE_DIR.join("search")
@@ -128,11 +133,6 @@ pub fn metrics_dir() -> PathBuf {
 /// Pinned packages file: ~/.config/reap/pinned.toml
 pub fn pinned_file() -> PathBuf {
     CONFIG_DIR.join("pinned.toml")
-}
-
-/// Reap Lua hooks script: ~/.config/reap/reap.lua
-pub fn reap_lua() -> PathBuf {
-    CONFIG_DIR.join("reap.lua")
 }
 
 /// Chroot directory: ~/.cache/reap/chroot/

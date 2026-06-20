@@ -11,7 +11,7 @@ RUN pacman -Syu --noconfirm && \
     flatpak \
     gnupg \
     openssh \
-    lua54 \
+    jq \
     openssl \
     pkgconf \
     fakeroot \

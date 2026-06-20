@@ -4,11 +4,13 @@ Reaper provides security information to help you make informed decisions about p
 
 ## Trust Model: Advisory Only
 
-Reaper uses an **advisory-only** trust model:
+Reaper uses an **advisory trust score** model:
 
 - Trust scores and warnings are **informational**
 - Installation is **never blocked** based on trust score
 - You are shown security data and can decide how to proceed
+- Tap package signature verification is a separate install policy and may block
+  unsigned or invalid tap packages unless `--insecure` is used
 
 This approach respects user autonomy while providing security awareness.
 
@@ -44,8 +46,8 @@ For tap repositories with signed packages:
 | Scenario | Behavior |
 |----------|----------|
 | Valid signature | Verified, shows badge |
-| Invalid signature | Warning shown, install continues |
-| No signature | Info shown, install continues |
+| Invalid signature | Install aborts unless `--insecure` is used |
+| No signature | Install aborts unless `--insecure` is used |
 
 Use `--strict` to require signatures:
 ```bash

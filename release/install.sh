@@ -11,7 +11,7 @@ REPO_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}"
 INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="${HOME}/.config/reap"
 BINARY_NAME="reap"
-VERSION="v0.8.2"
+VERSION="v0.8.3"
 
 # Colors
 readonly RED='\033[0;31m'
@@ -350,32 +350,26 @@ setup_config() {
 backend_order = ["tap", "aur", "pacman", "flatpak"]
 auto_resolve_deps = true
 noconfirm = false
+parallel = 4
 log_verbose = true
 theme = "dark"
 show_tips = true
 enable_cache = true
-enable_lua_hooks = false
 
 [security]
-strict_signatures = false
-allow_insecure = false
-gpg_keyserver = "hkps://keys.openpgp.org"
+verify_signatures = true
+strict_mode = false
+scan_pkgbuilds = true
+trust_threshold = 7.0
+trust_cache_ttl_hours = 24
 
-[performance]
-parallel_jobs = 4
-fast_mode = false
-max_parallel = 8
+[build]
+use_chroot = false
+clean_after_build = true
 
-[ui]
-show_progress = true
-colored_output = true
-trust_badges = true
-rating_stars = true
-
-[flatpak]
-enable = true
-prefer_user = true
-runtime_cleanup = true
+[devel]
+auto_check = true
+check_interval_hours = 24
 EOF
         success "Configuration file created"
     else
@@ -415,24 +409,6 @@ EOF
         debug "Pinned packages config created"
     fi
 
-    # Create reap.lua if it doesn't exist
-    if [[ ! -f "${CONFIG_DIR}/reap.lua" ]]; then
-        cat > "${CONFIG_DIR}/reap.lua" << 'EOF'
--- Reaper Lua hooks configuration
--- This file is loaded when enable_lua_hooks = true in reap.toml
-
--- Example: Pre-install hook
--- function pre_install(pkg)
---     print("Installing: " .. pkg.name)
--- end
-
--- Example: Post-install hook
--- function post_install(pkg)
---     print("Installed: " .. pkg.name .. " v" .. pkg.version)
--- end
-EOF
-        debug "Lua hooks config created"
-    fi
 }
 
 # Create default profiles

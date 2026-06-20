@@ -5,10 +5,6 @@
 //!
 //! Storage: `~/.local/share/reap/history/transactions/`
 
-// Allow dead_code for recording functions - they will be used when
-// transaction recording is integrated into install/upgrade/remove flows
-#![allow(dead_code)]
-
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -201,9 +197,16 @@ pub struct TransactionJournal {
 
 impl TransactionJournal {
     pub fn new() -> Self {
-        let transactions_dir = crate::paths::transactions_dir();
-        let _ = fs::create_dir_all(&transactions_dir);
+        Self::at(crate::paths::transactions_dir())
+    }
 
+    /// Create a journal rooted at an explicit transactions directory.
+    ///
+    /// Production code uses [`TransactionJournal::new`]; tests use this to
+    /// point the journal at a temporary directory so they never touch the
+    /// real `~/.local/share/reap` history.
+    pub fn at(transactions_dir: PathBuf) -> Self {
+        let _ = fs::create_dir_all(&transactions_dir);
         Self { transactions_dir }
     }
 
@@ -250,7 +253,7 @@ impl TransactionJournal {
         }
 
         // Sort by started_at descending (newest first)
-        records.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+        records.sort_by_key(|record| std::cmp::Reverse(record.started_at));
 
         if let Some(n) = limit {
             records.truncate(n);
@@ -307,11 +310,6 @@ impl TransactionBuilder {
         self
     }
 
-    /// Get the transaction ID
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-
     /// Finalize as completed transaction
     pub fn complete(self) -> TransactionRecord {
         let rollback_status = compute_rollback_eligibility(&self.affected_packages);
@@ -330,7 +328,11 @@ impl TransactionBuilder {
         }
     }
 
-    /// Finalize as failed transaction
+    /// Finalize as a failed transaction.
+    ///
+    /// Constructs the `Failed` status that the history UI already renders, used
+    /// when the underlying install/upgrade result is an error so the journal
+    /// never records a failed operation as `Completed`.
     pub fn fail(self, reason: String) -> TransactionRecord {
         TransactionRecord {
             id: self.id,
@@ -432,10 +434,21 @@ fn is_package_rollbackable(change: &PackageChange) -> Result<(), String> {
 // Artifact Discovery
 // =============================================================================
 
-/// Find artifact path for a package version in pacman cache
-pub fn find_artifact_in_cache(pkg: &str, version: &str) -> Option<PathBuf> {
-    let pacman_cache = PathBuf::from("/var/cache/pacman/pkg");
+/// The system directories searched for rollback artifacts, in priority order:
+/// the pacman cache, Reaper's AUR cache, and retained AUR artifacts.
+pub fn artifact_search_dirs() -> Vec<PathBuf> {
+    vec![
+        PathBuf::from("/var/cache/pacman/pkg"),
+        crate::paths::aur_cache_dir(),
+        aur_artifacts_dir(),
+    ]
+}
 
+/// Find an artifact for a package version within the given directories.
+///
+/// Directory injection keeps this testable: production passes
+/// [`artifact_search_dirs`], tests pass a temporary directory.
+pub fn find_artifact_in_dirs(pkg: &str, version: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
     // Try common patterns: pkg-version-release-arch.pkg.tar.zst
     // Note: version might include release, or release might be separate
     let patterns = [
@@ -446,44 +459,25 @@ pub fn find_artifact_in_cache(pkg: &str, version: &str) -> Option<PathBuf> {
         format!("{}-{}*.pkg.tar.xz", pkg, version),
     ];
 
-    for pattern in &patterns {
-        let full_pattern = pacman_cache.join(pattern);
-        if let Ok(entries) = glob::glob(&full_pattern.to_string_lossy()) {
-            for entry in entries.flatten() {
-                if entry.exists() {
-                    return Some(entry);
-                }
-            }
-        }
-    }
-
-    // Also check Reaper's AUR cache
-    let reaper_aur_cache = crate::paths::aur_cache_dir();
-    for pattern in &patterns {
-        let full_pattern = reaper_aur_cache.join(pattern);
-        if let Ok(entries) = glob::glob(&full_pattern.to_string_lossy()) {
-            for entry in entries.flatten() {
-                if entry.exists() {
-                    return Some(entry);
-                }
-            }
-        }
-    }
-
-    // Also check retained AUR artifacts (for rollback support)
-    let aur_artifacts = aur_artifacts_dir();
-    for pattern in &patterns {
-        let full_pattern = aur_artifacts.join(pattern);
-        if let Ok(entries) = glob::glob(&full_pattern.to_string_lossy()) {
-            for entry in entries.flatten() {
-                if entry.exists() {
-                    return Some(entry);
+    for dir in dirs {
+        for pattern in &patterns {
+            let full_pattern = dir.join(pattern);
+            if let Ok(entries) = glob::glob(&full_pattern.to_string_lossy()) {
+                for entry in entries.flatten() {
+                    if entry.exists() {
+                        return Some(entry);
+                    }
                 }
             }
         }
     }
 
     None
+}
+
+/// Find artifact path for a package version in the system caches.
+pub fn find_artifact_in_cache(pkg: &str, version: &str) -> Option<PathBuf> {
+    find_artifact_in_dirs(pkg, version, &artifact_search_dirs())
 }
 
 // =============================================================================
@@ -551,7 +545,6 @@ pub struct RollbackResult {
 /// Plan for rolling back a transaction
 #[derive(Debug)]
 pub struct RollbackPlan {
-    pub transaction_id: String,
     pub downgrades: Vec<(String, String, PathBuf)>, // (pkg_name, expected_version, artifact_path)
     pub reinstalls: Vec<(String, String, PathBuf)>, // (pkg_name, expected_version, artifact_path)
     pub removals: Vec<String>,                      // pkg_name
@@ -560,24 +553,6 @@ pub struct RollbackPlan {
 }
 
 impl RollbackPlan {
-    /// Check if rollback is possible (no unavailable packages)
-    pub fn is_executable(&self) -> bool {
-        self.unavailable.is_empty()
-    }
-
-    /// Check if this is a partial rollback
-    pub fn is_partial(&self) -> bool {
-        !self.unavailable.is_empty()
-            && (!self.downgrades.is_empty()
-                || !self.reinstalls.is_empty()
-                || !self.removals.is_empty())
-    }
-
-    /// Total number of packages that can be rolled back
-    pub fn executable_count(&self) -> usize {
-        self.downgrades.len() + self.reinstalls.len() + self.removals.len()
-    }
-
     /// Check if rollback has warnings that should be shown to user
     pub fn has_warnings(&self) -> bool {
         !self.analysis.warnings.is_empty()
@@ -610,12 +585,6 @@ pub enum RollbackWarning {
     },
     /// A package that depends on the target will also need attention
     AffectedDependent { package: String, dependent: String },
-    /// Provider change - something else now provides what this package provided
-    ProviderConflict {
-        package: String,
-        provides: String,
-        current_provider: String,
-    },
     /// Removing this package may leave orphaned dependencies
     OrphanedDependencies {
         package: String,
@@ -659,14 +628,6 @@ impl RollbackWarning {
             RollbackWarning::AffectedDependent { package, dependent } => {
                 format!("{} depends on {} and may be affected", dependent, package)
             }
-            RollbackWarning::ProviderConflict {
-                package,
-                provides,
-                current_provider,
-            } => format!(
-                "{} provided {} but {} now provides it",
-                package, provides, current_provider
-            ),
             RollbackWarning::OrphanedDependencies { package, orphans } => {
                 format!("Removing {} may orphan: {}", package, orphans.join(", "))
             }
@@ -695,13 +656,14 @@ impl RollbackWarning {
 pub struct ProviderChange {
     pub capability: String,
     pub old_provider: String,
-    pub new_provider: Option<String>,
 }
 
-/// Create a rollback plan from a transaction record
-pub fn create_rollback_plan(record: &TransactionRecord) -> RollbackPlan {
+/// Create a rollback plan from a transaction record.
+///
+/// `search_dirs` are the directories scanned to recover artifacts whose paths
+/// were not recorded (production passes [`artifact_search_dirs`]).
+pub fn create_rollback_plan(record: &TransactionRecord, search_dirs: &[PathBuf]) -> RollbackPlan {
     let mut plan = RollbackPlan {
-        transaction_id: record.id.clone(),
         downgrades: Vec::new(),
         reinstalls: Vec::new(),
         removals: Vec::new(),
@@ -751,7 +713,9 @@ pub fn create_rollback_plan(record: &TransactionRecord) -> RollbackPlan {
                     } else {
                         // Try to find artifact in cache again (might have been restored)
                         if let Some(ref prev_ver) = change.previous_version {
-                            if let Some(found) = find_artifact_in_cache(&change.name, prev_ver) {
+                            if let Some(found) =
+                                find_artifact_in_dirs(&change.name, prev_ver, search_dirs)
+                            {
                                 plan.downgrades.push((
                                     change.name.clone(),
                                     prev_ver.clone(),
@@ -772,7 +736,8 @@ pub fn create_rollback_plan(record: &TransactionRecord) -> RollbackPlan {
                     }
                 } else if let Some(ref prev_ver) = change.previous_version {
                     // No artifact recorded but we know the version - try to find it
-                    if let Some(found) = find_artifact_in_cache(&change.name, prev_ver) {
+                    if let Some(found) = find_artifact_in_dirs(&change.name, prev_ver, search_dirs)
+                    {
                         plan.downgrades
                             .push((change.name.clone(), prev_ver.clone(), found));
                     } else {
@@ -872,7 +837,6 @@ fn analyze_rollback_plan(plan: &RollbackPlan, record: &TransactionRecord) -> Rol
                     analysis.provider_changes.push(ProviderChange {
                         capability: provided,
                         old_provider: pkg.clone(),
-                        new_provider: None, // Provider still exists, just at different version
                     });
                 }
             }
@@ -1126,7 +1090,24 @@ fn verify_rollback(plan: &RollbackPlan, result: &RollbackResult) -> bool {
     all_verified
 }
 
-/// Update transaction record to mark as rolled back
+/// Classify a rollback attempt from its result.
+///
+/// A clean run requires *both* that no package failed and that post-rollback
+/// verification passed. A verification failure on an otherwise-applied rollback
+/// is therefore reported as `PartialSuccess`, never `Success`, so the journal
+/// reflects that the on-disk state was not confirmed.
+fn classify_rollback_attempt(result: &RollbackResult) -> RollbackAttemptResult {
+    if result.packages_failed.is_empty() && result.verification_passed {
+        RollbackAttemptResult::Success
+    } else if result.packages_restored.is_empty() && result.packages_removed.is_empty() {
+        RollbackAttemptResult::Failed {
+            reason: "All operations failed".to_string(),
+        }
+    } else {
+        RollbackAttemptResult::PartialSuccess
+    }
+}
+
 /// Record a rollback attempt in the transaction history
 pub fn record_rollback_attempt(
     journal: &TransactionJournal,
@@ -1135,16 +1116,7 @@ pub fn record_rollback_attempt(
 ) -> Result<()> {
     let now = Utc::now();
 
-    // Determine the attempt result
-    let attempt_result = if result.packages_failed.is_empty() && result.verification_passed {
-        RollbackAttemptResult::Success
-    } else if result.packages_restored.is_empty() && result.packages_removed.is_empty() {
-        RollbackAttemptResult::Failed {
-            reason: "All operations failed".to_string(),
-        }
-    } else {
-        RollbackAttemptResult::PartialSuccess
-    };
+    let attempt_result = classify_rollback_attempt(result);
 
     // Create the attempt record
     let attempt = RollbackAttempt {
@@ -1178,19 +1150,6 @@ pub fn record_rollback_attempt(
         },
     };
 
-    journal.save_transaction(record)
-}
-
-/// Mark a transaction as successfully rolled back (legacy function)
-/// Prefer using `record_rollback_attempt` for full attempt tracking
-pub fn mark_transaction_rolled_back(
-    journal: &TransactionJournal,
-    record: &mut TransactionRecord,
-) -> Result<()> {
-    let now = Utc::now();
-    record.rollback_status = RollbackStatus::RolledBack {
-        rolled_back_at: now,
-    };
     journal.save_transaction(record)
 }
 
@@ -1236,29 +1195,6 @@ pub fn retain_aur_artifact(
                         );
                         return Some(dest);
                     }
-                }
-            }
-        }
-    }
-
-    None
-}
-
-/// Find an artifact in the AUR artifacts retention directory
-pub fn find_retained_aur_artifact(pkg: &str, version: &str) -> Option<PathBuf> {
-    let artifacts_dir = aur_artifacts_dir();
-
-    let patterns = [
-        format!("{}-{}-*.pkg.tar.zst", pkg, version),
-        format!("{}-{}-*.pkg.tar.xz", pkg, version),
-    ];
-
-    for pattern in &patterns {
-        let full_pattern = artifacts_dir.join(pattern);
-        if let Ok(entries) = glob::glob(&full_pattern.to_string_lossy()) {
-            for entry in entries.flatten() {
-                if entry.exists() {
-                    return Some(entry);
                 }
             }
         }
@@ -1376,7 +1312,7 @@ mod tests {
         }];
 
         let record = make_test_record(TransactionOperation::Install, changes);
-        let plan = create_rollback_plan(&record);
+        let plan = create_rollback_plan(&record, &[]);
 
         assert!(plan.downgrades.is_empty());
         assert!(plan.reinstalls.is_empty());
@@ -1404,7 +1340,7 @@ mod tests {
         }];
 
         let record = make_test_record(TransactionOperation::Remove, changes);
-        let plan = create_rollback_plan(&record);
+        let plan = create_rollback_plan(&record, &[]);
 
         assert!(plan.downgrades.is_empty());
         assert_eq!(plan.reinstalls.len(), 1);
@@ -1430,11 +1366,46 @@ mod tests {
         }];
 
         let record = make_test_record(TransactionOperation::Upgrade, changes);
-        let plan = create_rollback_plan(&record);
+        let plan = create_rollback_plan(&record, &[]);
 
         // Since artifact doesn't exist and can't be found in cache
         assert_eq!(plan.unavailable.len(), 1);
         assert_eq!(plan.unavailable[0].0, "upgraded-pkg");
+    }
+
+    #[test]
+    fn test_rollback_plan_upgrade_resolves_artifact_via_cache_fallback() {
+        // An upgrade with no recorded previous_artifact must still be
+        // rollbackable when the previous version is discoverable on disk.
+        // This guards the dry-run/apply parity: the preview must rely on the
+        // same find_artifact_in_cache fallback that execution uses, not just
+        // on previous_artifact.exists().
+        let artifacts_dir = tempfile::tempdir().unwrap();
+        let artifact_path = artifacts_dir
+            .path()
+            .join("zz-fallback-pkg-1.0.0-x86_64.pkg.tar.zst");
+        std::fs::write(&artifact_path, "fake artifact").unwrap();
+
+        let changes = vec![PackageChange {
+            name: "zz-fallback-pkg".to_string(),
+            source: Source::Aur,
+            previous_version: Some("1.0.0".to_string()),
+            new_version: Some("2.0.0".to_string()),
+            previous_artifact: None, // not recorded; must be found via fallback
+            new_artifact: None,
+            change_type: PackageChangeType::Upgrade,
+        }];
+
+        let record = make_test_record(TransactionOperation::Upgrade, changes);
+        let plan = create_rollback_plan(&record, &[artifacts_dir.path().to_path_buf()]);
+
+        assert!(
+            plan.unavailable.is_empty(),
+            "cache-discoverable artifact should not be unavailable: {:?}",
+            plan.unavailable
+        );
+        assert_eq!(plan.downgrades.len(), 1);
+        assert_eq!(plan.downgrades[0].0, "zz-fallback-pkg");
     }
 
     #[test]
@@ -1466,7 +1437,7 @@ mod tests {
         ];
 
         let record = make_test_record(TransactionOperation::Install, changes);
-        let plan = create_rollback_plan(&record);
+        let plan = create_rollback_plan(&record, &[]);
 
         // mix-install should become removal
         assert_eq!(plan.removals.len(), 1);
@@ -1505,32 +1476,12 @@ mod tests {
         ];
 
         let record = make_test_record(TransactionOperation::Install, changes);
-        let plan = create_rollback_plan(&record);
+        let plan = create_rollback_plan(&record, &[]);
 
         // Both should be in removals
         assert_eq!(plan.removals.len(), 2);
         assert!(plan.removals.contains(&"main-pkg".to_string()));
         assert!(plan.removals.contains(&"dep-pkg".to_string()));
-    }
-
-    #[test]
-    fn test_rollback_plan_is_executable() {
-        let changes = vec![PackageChange {
-            name: "test-pkg".to_string(),
-            source: Source::Aur,
-            previous_version: None,
-            new_version: Some("1.0.0".to_string()),
-            previous_artifact: None,
-            new_artifact: None,
-            change_type: PackageChangeType::Install,
-        }];
-
-        let record = make_test_record(TransactionOperation::Install, changes);
-        let plan = create_rollback_plan(&record);
-
-        // Should be executable (no unavailable packages)
-        assert!(plan.is_executable());
-        assert!(!plan.is_partial());
     }
 
     #[test]
@@ -1561,12 +1512,12 @@ mod tests {
         ];
 
         let record = make_test_record(TransactionOperation::Upgrade, changes);
-        let plan = create_rollback_plan(&record);
+        let plan = create_rollback_plan(&record, &[]);
 
-        // Should be partial (some unavailable)
-        assert!(!plan.is_executable());
-        assert!(plan.is_partial());
-        assert_eq!(plan.executable_count(), 1);
+        // Should be partial: one artifact present (executable), one missing.
+        assert!(!plan.unavailable.is_empty());
+        let executable = plan.downgrades.len() + plan.reinstalls.len() + plan.removals.len();
+        assert_eq!(executable, 1);
 
         // Cleanup
         let _ = std::fs::remove_file(&artifact_path);
@@ -1635,7 +1586,8 @@ mod tests {
 
     #[test]
     fn test_transaction_builder() {
-        let journal = TransactionJournal::new();
+        let dir = tempfile::tempdir().unwrap();
+        let journal = TransactionJournal::at(dir.path().to_path_buf());
         let mut builder =
             journal.begin_transaction(TransactionOperation::Install, vec!["test-pkg".to_string()]);
 
@@ -1657,11 +1609,102 @@ mod tests {
 
     #[test]
     fn test_transaction_builder_fail() {
-        let journal = TransactionJournal::new();
+        let dir = tempfile::tempdir().unwrap();
+        let journal = TransactionJournal::at(dir.path().to_path_buf());
         let builder =
             journal.begin_transaction(TransactionOperation::Install, vec!["test-pkg".to_string()]);
 
         let record = builder.fail("Build failed".to_string());
         assert!(matches!(record.status, TransactionStatus::Failed(_)));
+    }
+
+    #[test]
+    fn test_journal_at_isolates_to_its_directory() {
+        // A journal created with `at` must read and write only within the
+        // injected directory, never the real ~/.local/share/reap history.
+        let dir = tempfile::tempdir().unwrap();
+        let journal = TransactionJournal::at(dir.path().to_path_buf());
+
+        let mut builder =
+            journal.begin_transaction(TransactionOperation::Install, vec!["iso-pkg".to_string()]);
+        builder.add_package_change(PackageChange {
+            name: "iso-pkg".to_string(),
+            source: Source::Aur,
+            previous_version: None,
+            new_version: Some("1.0.0".to_string()),
+            previous_artifact: None,
+            new_artifact: None,
+            change_type: PackageChangeType::Install,
+        });
+        let record = builder.complete();
+        journal.save_transaction(&record).unwrap();
+
+        // The record is loadable from the same temp journal...
+        let loaded = journal.load_transaction(&record.id).unwrap();
+        assert_eq!(loaded.id, record.id);
+        // ...and the file physically lives under the injected directory.
+        assert!(dir.path().join(format!("{}.json", record.id)).exists());
+        assert_eq!(journal.list_transactions(None).unwrap().len(), 1);
+    }
+
+    // =========================================================================
+    // Rollback Attempt Classification Tests
+    // =========================================================================
+
+    fn rollback_result(
+        restored: &[&str],
+        removed: &[&str],
+        failed: &[(&str, &str)],
+        verification_passed: bool,
+    ) -> RollbackResult {
+        RollbackResult {
+            success: failed.is_empty(),
+            packages_restored: restored.iter().map(|s| s.to_string()).collect(),
+            packages_removed: removed.iter().map(|s| s.to_string()).collect(),
+            packages_failed: failed
+                .iter()
+                .map(|(p, r)| (p.to_string(), r.to_string()))
+                .collect(),
+            verification_passed,
+        }
+    }
+
+    #[test]
+    fn test_classify_rollback_attempt_success() {
+        let result = rollback_result(&["pkg"], &[], &[], true);
+        assert_eq!(
+            classify_rollback_attempt(&result),
+            RollbackAttemptResult::Success
+        );
+    }
+
+    #[test]
+    fn test_classify_rollback_attempt_partial_on_failed_package() {
+        let result = rollback_result(&["pkg-a"], &[], &[("pkg-b", "pacman -U failed")], true);
+        assert_eq!(
+            classify_rollback_attempt(&result),
+            RollbackAttemptResult::PartialSuccess
+        );
+    }
+
+    #[test]
+    fn test_classify_rollback_attempt_all_failed() {
+        let result = rollback_result(&[], &[], &[("pkg", "artifact missing")], false);
+        assert!(matches!(
+            classify_rollback_attempt(&result),
+            RollbackAttemptResult::Failed { .. }
+        ));
+    }
+
+    #[test]
+    fn test_classify_rollback_attempt_verification_failure_is_partial() {
+        // Every package operation reported success, but post-rollback
+        // verification did not confirm the expected on-disk state. This must
+        // be PartialSuccess, not Success, so the journal records the doubt.
+        let result = rollback_result(&["pkg"], &[], &[], false);
+        assert_eq!(
+            classify_rollback_attempt(&result),
+            RollbackAttemptResult::PartialSuccess
+        );
     }
 }

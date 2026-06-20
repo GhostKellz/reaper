@@ -39,7 +39,6 @@ pub enum PublisherStatus {
     Unknown,
 }
 
-#[allow(dead_code)] // Reserved for Phase C: tap trust validation
 #[derive(Serialize, Deserialize, Default)]
 struct SyncState {
     #[serde(with = "chrono::serde::ts_seconds_option")]
@@ -100,7 +99,7 @@ pub fn discover_taps() -> Vec<Tap> {
             }
         }
     }
-    taps.sort_by(|a, b| b.priority.cmp(&a.priority));
+    taps.sort_by_key(|tap| std::cmp::Reverse(tap.priority));
     taps
 }
 
@@ -333,7 +332,8 @@ pub fn sync_taps() {
 }
 
 /// Synchronizes enabled taps based on the configured sync interval.
-#[allow(dead_code)] // Reserved for Phase C: tap trust validation before sync
+/// Auto-sync is gated by the `auto_sync` setting and `sync_interval_hours`;
+/// each tap is verified via [`sync_tap_with_verification`] (advisory mode).
 pub fn sync_enabled_taps() -> Result<(), String> {
     let taps = discover_taps();
     let state_path = sync_state_path();
@@ -380,26 +380,23 @@ pub fn sync_enabled_taps() -> Result<(), String> {
     };
     if should_sync {
         for tap in taps.iter().filter(|t| t.enabled) {
-            let tap_path = ensure_tap_cloned(tap);
-            if tap_path.exists() {
-                // git pull
-                let _ = Command::new("git")
-                    .arg("-C")
-                    .arg(&tap_path)
-                    .arg("pull")
-                    .status();
-            } else {
-                // already cloned by ensure_tap_cloned
+            // Route auto-sync through the same GPG-advisory trust path as the
+            // manual `reap tap sync` command, instead of a bare `git pull`.
+            if let Err(e) = sync_tap_with_verification(tap) {
+                eprintln!("[tap] ❌ Auto-sync failed for '{}': {}", tap.name, e);
             }
         }
         state.last_sync = Some(now);
-        let _ = fs::create_dir_all(state_path.parent().unwrap());
-        let _ = fs::write(&state_path, serde_json::to_string(&state).unwrap());
+        if let Some(parent) = state_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        if let Ok(json) = serde_json::to_string(&state) {
+            let _ = fs::write(&state_path, json);
+        }
     }
     Ok(())
 }
 
-#[allow(dead_code)] // Reserved for Phase C: tap trust validation
 fn sync_state_path() -> PathBuf {
     crate::paths::sync_state_file()
 }
@@ -635,6 +632,27 @@ mod tests {
         // Different variants are not equal
         assert_ne!(PublisherStatus::NotApplicable, PublisherStatus::Unknown);
         assert_ne!(PublisherStatus::SelfDeclared, PublisherStatus::KeyMatches);
+    }
+
+    #[test]
+    fn sync_state_roundtrips_through_json() {
+        // Guards the auto-sync persistence path: a serialized state must
+        // deserialize back to an equivalent timestamp.
+        let state = SyncState {
+            last_sync: Some(Utc::now()),
+        };
+        let json = serde_json::to_string(&state).expect("serialize");
+        let restored: SyncState = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            state.last_sync.map(|t| t.timestamp()),
+            restored.last_sync.map(|t| t.timestamp())
+        );
+    }
+
+    #[test]
+    fn sync_state_defaults_to_no_previous_sync() {
+        let state = SyncState::default();
+        assert!(state.last_sync.is_none());
     }
 
     #[test]

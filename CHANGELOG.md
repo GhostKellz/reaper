@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-06-19
+
+### ✨ Added
+- **`reap diff`** - diff a package's current PKGBUILD and `.install` against the last reviewed baseline, surfacing changes since your last review before reinstalling or upgrading
+- **Unified audit engine** (`audit.rs`) - a single structured-findings analyzer for PKGBUILD/install-hook heuristics, replacing the scattered pattern lists in `utils`/`trust` and the removed `security::SecurityManager`. High-confidence infostealer evidence (a sensitive-credential read correlated with a network-exfiltration mechanism) can be treated as a hard block
+- **Install plan preview** (`install_plan.rs`) - classifies explicit vs. dependency / make-dependency / check-dependency packages before building
+- **Shared HTTP clients with timeouts** (`http.rs`) - all network access now uses a 10s connect / 30s request timeout so a slow or dead mirror can no longer hang the process
+- **Tap auto-sync** - enabled taps now sync before search/install/upgrade operations through the same GPG-advisory verification path as `reap tap sync` (previously a dead path doing a bare `git pull`)
+- **`reap trust update`** - refreshes cached trust scores for installed AUR packages (was a stub)
+- **Live makepkg build progress** - `==>` phase markers (retrieving sources, building, packaging, ...) are surfaced during native AUR builds
+- **Rollback validation harness** (`docker/scripts/test-rollback-flows.sh`) - non-interactive Arch-container checks for repo/AUR install→rollback and missing-artifact classification
+- **CLI conformance tests** (`tests/cli_conformance.rs`) - introspect the clap command graph so documentation drift (renamed commands, removed flags reappearing) is caught at test time
+
+### 🔧 Changed
+- **Rollback preview parity** - `reap rollback dry-run` now derives its plan from the same `create_rollback_plan` the apply path uses, so an artifact discoverable only via the pacman-cache fallback is no longer mislabeled "unavailable"
+- **Rollback attempt classification** - extracted into `classify_rollback_attempt`; a run where every package op succeeded but post-rollback verification failed is now recorded as `PartialSuccess`, never `Success`
+- **Dependencies** - `reqwest` 0.12 → 0.13 (rustls); minimum Rust raised to 1.96
+- **Documentation** - reorganized under `docs/`; the root `ROADMAP.md` moved to `docs/roadmap.md`, and GPG/trust references were updated
+
+### 🧹 Removed
+- **Lua hooks** - the `mlua` dependency, `src/lua.rs`, and the `enable_lua_hooks` config were removed; the hook runner was a no-op (shell hooks are unaffected)
+- **Vestigial `reap.lua`** - after the Lua removal this file only stored a `keyserver=` line that nothing read back, so it and the non-functional `reap gpg set-keyserver` command were removed; `reap doctor` no longer requires `reap.lua`
+- **Legacy `security.rs`** - the old `SecurityManager` was superseded by the unified `audit.rs` engine
+- **Dead code** - fake analytics resource monitors, redundant `enhanced_aur` file-conflict detection, and unused transaction-journal helpers/fields were pulled (and the module-wide `#![allow(dead_code)]` removed)
+
+### 🐛 Fixed
+- **Rollback "not found" message** - a missing transaction printed the "Transaction not found" prefix twice; it now prints once and points at `reap rollback list`
+- **Panic hardening** - `unwrap()`/`expect()` on `stdout`/`stderr` capture and state-file writes in the makepkg, tap-sync, and git-clone paths were replaced with graceful error handling
+- **Documentation drift** - reconciled README, `docs/`, and the installer's generated `reap.toml` with the real CLI and config schema: corrected rollback usage to the transaction-id subcommands, removed nonexistent `--force`/`--resolve-deps`/`--gpg-keyserver`/`doctor --fix` references, dropped invalid config keys, and standardized the `~/.config/reap/` path (legacy `reaper` was migration-only)
+
 ## [0.8.2] - 2026-06-15
 
 ### 🛡️ Added - Supply-Chain Hardening
@@ -66,8 +96,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Interactive search & install with dynamic filtering
 - Advanced build system with comprehensive makepkg integration
 - Repository management with multi-repo support and priorities
-- GitHub Actions CI/CD workflows for build, test, and release
-- Docker support with multi-platform builds
+- Docker-based testing environment
 - Makefile for local development workflow
 
 ### 🔧 Changed

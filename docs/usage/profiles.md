@@ -42,10 +42,10 @@ Profiles can override these settings:
 
 ## Profile Storage
 
-Profiles are stored in `~/.config/reaper/profiles/`:
+Profiles are stored in `~/.config/reap/profiles/`:
 
 ```
-~/.config/reaper/profiles/
+~/.config/reap/profiles/
 ├── .active           # Contains name of active profile
 ├── dev.toml
 ├── gaming.toml
@@ -54,7 +54,7 @@ Profiles are stored in `~/.config/reaper/profiles/`:
 
 ## Example Profile
 
-`~/.config/reaper/profiles/dev.toml`:
+`~/.config/reap/profiles/dev.toml`:
 
 ```toml
 name = "dev"

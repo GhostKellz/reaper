@@ -1,4 +1,5 @@
 // Pacman repo logic
+use anyhow::{Context, Result, bail};
 use std::process::Command;
 
 /// Install a package from the official repositories using pacman.
@@ -7,9 +8,7 @@ pub fn install(package: &str) {
     install_with_options(package, true);
 }
 
-/// Install a package with explicit confirmation control.
-/// When `noconfirm` is false, pacman will prompt the user for confirmation.
-pub fn install_with_options(package: &str, noconfirm: bool) {
+pub fn install_result(package: &str, noconfirm: bool) -> Result<()> {
     println!("[pacman] Installing package: {}", package);
 
     let mut cmd = Command::new("sudo");
@@ -21,15 +20,22 @@ pub fn install_with_options(package: &str, noconfirm: bool) {
 
     cmd.arg(package);
 
-    let status = cmd.status();
-    if let Ok(s) = status {
-        if s.success() {
-            println!("[pacman] {} installed successfully!", package);
-        } else {
-            eprintln!("[pacman] pacman failed for {}", package);
-        }
-    } else {
-        eprintln!("[pacman] failed to run pacman for {}", package);
+    let status = cmd
+        .status()
+        .with_context(|| format!("failed to run pacman for {}", package))?;
+    if !status.success() {
+        bail!("pacman failed for {}", package);
+    }
+
+    println!("[pacman] {} installed successfully!", package);
+    Ok(())
+}
+
+/// Install a package with explicit confirmation control.
+/// When `noconfirm` is false, pacman will prompt the user for confirmation.
+pub fn install_with_options(package: &str, noconfirm: bool) {
+    if let Err(e) = install_result(package, noconfirm) {
+        eprintln!("[pacman] {}", e);
     }
 }
 
@@ -42,7 +48,7 @@ pub fn install_interactive(package: &str) {
 
 /// Remove a package with explicit confirmation control.
 #[allow(dead_code)]
-pub fn remove_with_options(packages: &[String], noconfirm: bool) {
+pub fn remove_with_options(packages: &[String], noconfirm: bool) -> bool {
     println!("[pacman] Removing packages: {:?}", packages);
 
     let mut cmd = Command::new("sudo");
@@ -56,15 +62,19 @@ pub fn remove_with_options(packages: &[String], noconfirm: bool) {
         cmd.arg(pkg);
     }
 
-    let status = cmd.status();
-    if let Ok(s) = status {
-        if s.success() {
+    match cmd.status() {
+        Ok(s) if s.success() => {
             println!("[pacman] Packages removed successfully");
-        } else {
-            eprintln!("[pacman] Failed to remove packages");
+            true
         }
-    } else {
-        eprintln!("[pacman] Failed to run pacman -Rs");
+        Ok(_) => {
+            eprintln!("[pacman] Failed to remove packages");
+            false
+        }
+        Err(e) => {
+            eprintln!("[pacman] Failed to run pacman -Rs: {}", e);
+            false
+        }
     }
 }
 

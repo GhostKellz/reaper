@@ -66,11 +66,9 @@ pub struct TrustScore {
 pub enum SecurityFlag {
     UnverifiedSignature,
     UnknownPublisher,
-    RecentVulnerability,
     SuspiciousFiles,
     NetworkAccess,
     SystemAccess,
-    OutdatedDependencies,
 }
 
 #[allow(dead_code)] // Infrastructure for future verification features
@@ -111,11 +109,11 @@ pub struct TrustEngine {
 
 impl TrustEngine {
     pub fn new() -> Self {
-        let cache_dir = crate::paths::trust_dir();
-        let _ = fs::create_dir_all(&cache_dir);
-
+        // The cache directory is created lazily on first write (see
+        // cache_trust_score) so constructing an engine has no filesystem
+        // side effects.
         Self {
-            cache_dir,
+            cache_dir: crate::paths::trust_dir(),
             reputation_db: HashMap::new(),
         }
     }
@@ -290,34 +288,31 @@ impl TrustEngine {
         }
     }
 
+    /// Derive advisory trust flags from the unified [`crate::audit`] engine so
+    /// trust scoring and the install-time PKGBUILD review share one detector.
     fn analyze_pkgbuild_security(&self, pkgbuild: &str) -> Vec<SecurityFlag> {
-        let mut flags = Vec::new();
+        use crate::audit::Category;
 
-        // Check for suspicious patterns
-        let suspicious_patterns = [
-            "curl",
-            "wget",
-            "git clone",
-            "sudo",
-            "chmod +x",
-            "rm -rf",
-            "dd if=",
-            "mktemp",
-            "eval",
-            "exec",
-        ];
-
-        for pattern in &suspicious_patterns {
-            if pkgbuild.contains(pattern) {
-                match *pattern {
-                    "curl" | "wget" | "git clone" => flags.push(SecurityFlag::NetworkAccess),
-                    "sudo" | "chmod +x" => flags.push(SecurityFlag::SystemAccess),
-                    "rm -rf" | "dd if=" => flags.push(SecurityFlag::SuspiciousFiles),
-                    _ => flags.push(SecurityFlag::SuspiciousFiles),
-                }
+        let report = crate::audit::audit(pkgbuild, "");
+        let (mut network, mut system, mut suspicious) = (false, false, false);
+        for finding in &report.findings {
+            match finding.category {
+                Category::NetworkDownload | Category::SourceIntegrity => network = true,
+                Category::PrivilegeEscalation | Category::DynamicExecution => system = true,
+                _ => suspicious = true,
             }
         }
 
+        let mut flags = Vec::new();
+        if network {
+            flags.push(SecurityFlag::NetworkAccess);
+        }
+        if system {
+            flags.push(SecurityFlag::SystemAccess);
+        }
+        if suspicious {
+            flags.push(SecurityFlag::SuspiciousFiles);
+        }
         flags
     }
 
@@ -329,7 +324,7 @@ impl TrustEngine {
                     "https://aur.archlinux.org/rpc/?v=5&type=info&arg[]={}",
                     _pkg
                 );
-                if let Ok(resp) = reqwest::get(&url).await
+                if let Ok(resp) = crate::http::client().get(&url).send().await
                     && let Ok(json) = resp.json::<serde_json::Value>().await
                 {
                     return json["results"][0]["NumVotes"].as_u64().unwrap_or(0) as u32;
@@ -407,6 +402,7 @@ impl TrustEngine {
 
     #[allow(dead_code)]
     pub fn cache_trust_score(&self, trust_score: &TrustScore) -> Result<()> {
+        fs::create_dir_all(&self.cache_dir)?;
         let cache_file = self.cache_dir.join(format!("{}.json", trust_score.package));
         let content = serde_json::to_string_pretty(trust_score)?;
         fs::write(cache_file, content)?;

@@ -67,6 +67,27 @@ pub fn audit_package(pkg: &str) {
             } else {
                 println!("[AUDIT][AUR] Dependencies for {}: {:?}", pkg, deps);
             }
+
+            let install_hook = crate::aur::get_install_file_preview(pkg, &pkgb);
+            let report = crate::audit::audit(&pkgb, &install_hook);
+            if report.findings.is_empty() {
+                println!("[AUDIT][AUR] No security findings for {}.", pkg);
+            } else {
+                println!("[AUDIT][AUR] Security findings for {}:", pkg);
+                for finding in &report.findings {
+                    println!("  {}", finding.describe());
+                }
+            }
+            println!(
+                "[AUDIT][AUR] Risk score: {} | infostealer confidence: {}",
+                report.risk_score,
+                report.infostealer_confidence.label()
+            );
+            if report.is_infostealer_block() {
+                println!(
+                    "[AUDIT][AUR] ⛔ Would be BLOCKED on install by default (override: --insecure)"
+                );
+            }
         }
         Some(crate::core::Source::Flatpak) => {
             println!("[AUDIT][FLATPAK] flatpak info {}:", pkg);
@@ -218,24 +239,6 @@ pub fn completion(shell: &str) {
     println!("Full completion support is planned for a future release.");
 }
 
-pub fn cli_set_keyserver(keyserver: &str) {
-    let config_path = crate::paths::reap_lua();
-    if let Ok(mut script) = fs::read_to_string(&config_path) {
-        if script.contains("keyserver = ") {
-            script = script.replace(
-                regex::Regex::new("keyserver = \".*\"").unwrap().as_str(),
-                &format!("keyserver = \"{}\"", keyserver),
-            );
-        } else {
-            script.push_str(&format!("\nkeyserver = \"{}\"\n", keyserver));
-        }
-        let _ = fs::write(&config_path, script);
-        println!("[reap] Set keyserver to {} in config.", keyserver);
-    } else {
-        println!("[reap] Could not update config at {:?}.", config_path);
-    }
-}
-
 pub async fn check_keyserver_async(keyserver: &str) {
     let output = tokio::process::Command::new("gpg")
         .args(["--keyserver", keyserver, "--list-keys"])
@@ -364,7 +367,7 @@ pub fn doctor_report() -> Result<String, String> {
     if !config_dir.exists() {
         issues.push(format!("Missing config dir: {}", config_dir.display()));
     }
-    let required = ["reap.lua", "pinned.toml"];
+    let required = ["pinned.toml"];
     for f in &required {
         let fpath = config_dir.join(f);
         if !fpath.exists() {
@@ -507,144 +510,21 @@ pub mod cache {
     }
 }
 
+/// Flat-string compatibility shim over the unified [`crate::audit`] engine.
+///
+/// Detection logic (risky patterns, the Atomic-Arch supply-chain techniques,
+/// suspicious domains, credential and infostealer heuristics) lives in
+/// `src/audit.rs`. This wrapper preserves the historical `(warnings, score)`
+/// return shape for existing callers.
+pub fn audit_pkgbuild_findings(pkgbuild: &str) -> (Vec<String>, i32) {
+    let report = crate::audit::audit(pkgbuild, "");
+    (report.warnings(), report.risk_score)
+}
+
 /// Audit a PKGBUILD for risky patterns
 #[allow(dead_code)]
 pub fn audit_pkgbuild(pkgbuild: &str) -> (Vec<String>, i32) {
-    let risky_patterns = [
-        ("curl", 2),               // Network downloads
-        ("wget", 2),               // Network downloads
-        ("sudo", 9),               // Privilege escalation
-        ("rm -rf", 8),             // Destructive operations
-        ("chmod 777", 7),          // Insecure permissions
-        ("chown", 5),              // Ownership changes
-        ("dd", 8),                 // Low-level disk operations
-        ("mkfs", 9),               // Filesystem creation
-        ("mount", 7),              // Filesystem mounting
-        ("scp", 4),                // Network file transfer
-        ("nc", 6),                 // Network connections
-        ("ncat", 6),               // Network connections
-        ("bash -c", 5),            // Dynamic code execution
-        ("eval", 7),               // Dynamic code execution
-        ("setcap", 6),             // Capability management
-        ("setuid", 8),             // SUID bit setting
-        ("setgid", 7),             // SGID bit setting
-        ("useradd", 6),            // User management
-        ("groupadd", 5),           // Group management
-        ("passwd", 7),             // Password changes
-        ("iptables", 6),           // Firewall rules
-        ("firewalld", 6),          // Firewall management
-        ("systemctl", 4),          // Service management
-        ("service", 4),            // Service management
-        ("pkexec", 8),             // Privilege escalation
-        ("gksu", 8),               // Privilege escalation
-        ("kdesu", 8),              // Privilege escalation
-        ("exec", 6),               // Code execution
-        ("system(", 7),            // System calls
-        ("os.system", 7),          // Python system calls
-        ("subprocess", 5),         // Process spawning
-        ("shell=True", 6),         // Shell execution
-        ("unsafeFunctionCall", 9), // Known unsafe patterns
-        ("download_file", 3),      // File downloads
-        ("git clone", 3),          // Source downloads
-        ("tar -x", 2),             // Archive extraction
-        ("unzip", 2),              // Archive extraction
-    ];
-
-    let mut warnings = Vec::new();
-    let mut risk_score = 0;
-
-    for (pattern, severity) in &risky_patterns {
-        if pkgbuild.contains(pattern) {
-            warnings.push(format!(
-                "⚠️ SECURITY: Found potentially risky pattern '{}' (severity: {})",
-                pattern, severity
-            ));
-            risk_score += severity;
-        }
-    }
-
-    // Supply-chain / build-time code-execution patterns.
-    //
-    // Modeled on the June 2026 "Atomic Arch" AUR campaign, where adopted
-    // orphan packages injected malicious npm/bun dependencies and executed a
-    // bundled ELF payload via install hooks. These patterns flag the
-    // *techniques* rather than specific IOCs, so they stay relevant as the
-    // payloads change.
-    let supply_chain_patterns = [
-        (".onion", 9),     // Tor hidden-service C2 endpoint
-        ("src/hooks/", 8), // Bundled hook scripts/binaries run during build
-        ("preinstall", 7), // npm lifecycle hook executing local code
-        ("postinstall", 7),
-        ("bun install", 5), // Fetches and runs JS deps at build time
-        ("bun add", 5),
-        ("npm install", 4),
-        ("pnpm install", 4),
-        ("yarn add", 4),
-    ];
-
-    for (pattern, severity) in &supply_chain_patterns {
-        if pkgbuild.contains(pattern) {
-            warnings.push(format!(
-                "📦 SUPPLY-CHAIN: build-time dependency/hook pattern '{}' (severity: {})",
-                pattern, severity
-            ));
-            risk_score += severity;
-        }
-    }
-
-    // Check for suspicious URLs
-    let suspicious_domains = [
-        "bit.ly",
-        "tinyurl.com",
-        "t.co",
-        "goo.gl", // URL shorteners
-        "pastebin.com",
-        "hastebin.com", // Code paste sites
-        "tempfile.org",
-        "temp.sh",
-        "0x0.st", // Temporary file hosts
-    ];
-
-    for domain in &suspicious_domains {
-        if pkgbuild.contains(domain) {
-            warnings.push(format!(
-                "🚨 SECURITY: Suspicious domain detected: {}",
-                domain
-            ));
-            risk_score += 5;
-        }
-    }
-
-    // Check for hardcoded credentials
-    let credential_patterns = [
-        "password=",
-        "passwd=",
-        "api_key=",
-        "apikey=",
-        "secret=",
-        "token=",
-        "auth=",
-        "login=",
-        "user=",
-        "pass=",
-    ];
-
-    for pattern in &credential_patterns {
-        if pkgbuild.to_lowercase().contains(pattern) {
-            warnings.push(format!(
-                "🔐 SECURITY: Potential hardcoded credential: {}",
-                pattern
-            ));
-            risk_score += 6;
-        }
-    }
-
-    // Check for network operations without verification
-    if pkgbuild.contains("curl") && !pkgbuild.contains("--verify") && !pkgbuild.contains("checksum")
-    {
-        warnings.push("🌐 SECURITY: Network download without verification detected".to_string());
-        risk_score += 4;
-    }
+    let (warnings, risk_score) = audit_pkgbuild_findings(pkgbuild);
 
     if warnings.is_empty() {
         println!("✅ PKGBUILD security scan: No obvious security issues found");

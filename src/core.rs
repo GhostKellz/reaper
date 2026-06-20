@@ -7,11 +7,9 @@ use crate::pacman;
 use crate::tap::{Tap, discover_taps, find_tap_for_pkg};
 use crate::tui::LogPane;
 use crate::utils;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::Local;
-use futures::FutureExt;
 use futures::future::join_all;
-use indicatif::{ProgressBar, ProgressStyle};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -129,13 +127,9 @@ pub struct InstallOptions {
     /// When true, allows installation of packages without valid signatures.
     /// Default: false (verification required for taps)
     pub insecure: bool,
-    /// Custom GPG keyserver for key fetching
-    pub gpg_keyserver: Option<String>,
-    /// Skip some safety checks for faster installation (not recommended)
-    #[allow(dead_code)]
+    /// Skip some optional safety checks for faster installation (not recommended)
     pub fast_mode: bool,
     /// Require signatures to be from fully trusted keys (not just valid)
-    #[allow(dead_code)]
     pub strict_signatures: bool,
     /// Maximum parallel operations
     #[allow(dead_code)]
@@ -215,7 +209,7 @@ pub async fn install_with_priority(
     _confirm: bool,
     log: Arc<LogPane>,
     opts: &InstallOptions,
-) {
+) -> Result<()> {
     use owo_colors::OwoColorize;
     let start = Instant::now();
 
@@ -302,15 +296,15 @@ pub async fn install_with_priority(
                     if let Some(pubinfo) = pubinfo {
                         let keyid = pubinfo.gpg_key.split_whitespace().last().unwrap_or("");
                         // Check actual GPG signature status - don't trust self-declared 'verified' field
-                        let sig_verified = sig_path.exists() && pkgb_path.exists() && {
-                            std::process::Command::new("gpg")
-                                .arg("--verify")
-                                .arg(&sig_path)
-                                .arg(&pkgb_path)
-                                .output()
-                                .map(|o| o.status.success())
-                                .unwrap_or(false)
+                        let sig_result = if sig_path.exists() && pkgb_path.exists() {
+                            Some(crate::gpg::verify_signature(&sig_path, &pkgb_path))
+                        } else {
+                            None
                         };
+                        let sig_verified = sig_result
+                            .as_ref()
+                            .map(|result| result.is_valid())
+                            .unwrap_or(false);
                         let verified_str = if sig_verified {
                             "[✓ GPG Verified]".green().to_string()
                         } else if pubinfo.verified {
@@ -333,10 +327,7 @@ pub async fn install_with_priority(
                             .map(|o| o.status.success())
                             .unwrap_or(false);
                         if !key_present {
-                            let keyserver = opts
-                                .gpg_keyserver
-                                .as_deref()
-                                .unwrap_or("hkps://keys.openpgp.org");
+                            let keyserver = "hkps://keys.openpgp.org";
                             log.push(&format!(
                                 "[reap][gpg] Importing publisher key {} from {}...",
                                 keyid, keyserver
@@ -359,20 +350,11 @@ pub async fn install_with_priority(
                         }
                         // Verify PKGBUILD.sig
                         if sig_path.exists() && pkgb_path.exists() {
-                            let verify = std::process::Command::new("gpg")
-                                .arg("--verify")
-                                .arg(&sig_path)
-                                .arg(&pkgb_path)
-                                .status();
-                            if let Ok(s) = verify {
-                                if s.success() {
+                            let verify = crate::gpg::verify_signature(&sig_path, &pkgb_path);
+                            if verify.is_valid() {
+                                if opts.strict_signatures && !verify.is_trusted() {
                                     log.push(&format!(
-                                        "{} PKGBUILD signature verified",
-                                        "✓".green()
-                                    ));
-                                } else {
-                                    log.push(&format!(
-                                        "{} Verification failed for PKGBUILD.sig (key: {})",
+                                        "{} PKGBUILD signature is valid but not fully trusted (key: {})",
                                         "❌".red(),
                                         keyid
                                     ));
@@ -381,13 +363,16 @@ pub async fn install_with_priority(
                                             "{} Aborting install. Use --insecure to override.",
                                             "✋".red()
                                         ));
-                                        return;
-                                    } else {
-                                        log.push(&format!(
-                                            "{} Continuing install due to --insecure.",
-                                            "⚠️".yellow()
-                                        ));
+                                        bail!(
+                                            "PKGBUILD signature for {} is valid but not fully trusted",
+                                            pkg
+                                        );
                                     }
+                                } else {
+                                    log.push(&format!(
+                                        "{} PKGBUILD signature verified",
+                                        "✓".green()
+                                    ));
                                 }
                             } else {
                                 log.push(&format!(
@@ -400,7 +385,7 @@ pub async fn install_with_priority(
                                         "{} Aborting install. Use --insecure to override.",
                                         "✋".red()
                                     ));
-                                    return;
+                                    bail!("PKGBUILD signature verification failed for {}", pkg);
                                 } else {
                                     log.push(&format!(
                                         "{} Continuing install due to --insecure.",
@@ -411,7 +396,7 @@ pub async fn install_with_priority(
                         } else {
                             log.push(&format!("{} PKGBUILD.sig missing. Aborting install. Use --insecure to override.", "❌".red()));
                             if !opts.insecure {
-                                return;
+                                bail!("PKGBUILD signature is missing for {}", pkg);
                             } else {
                                 log.push(&format!(
                                     "{} Continuing install due to --insecure.",
@@ -425,7 +410,7 @@ pub async fn install_with_priority(
                             "⚠️".yellow()
                         ));
                         if !opts.insecure {
-                            return;
+                            bail!("tap publisher is not verified for {}", pkg);
                         }
                     }
                 }
@@ -433,7 +418,7 @@ pub async fn install_with_priority(
             }
             Source::Pacman => {
                 log.push(&format!("[reap][pacman] Installing {} from repo", pkg));
-                pacman::install(pkg);
+                pacman::install_result(pkg, true)?;
                 log.push(&format!("[✓] Installed {} from Pacman", pkg));
             }
             Source::Aur => {
@@ -449,9 +434,8 @@ pub async fn install_with_priority(
 
                 let aur_opts = InstallOptions {
                     insecure: opts.insecure,
-                    gpg_keyserver: opts.gpg_keyserver.clone(),
-                    fast_mode: false,
-                    strict_signatures: false,
+                    fast_mode: opts.fast_mode,
+                    strict_signatures: opts.strict_signatures,
                     max_parallel: 4,
                     asdeps: opts.asdeps,
                 };
@@ -495,7 +479,7 @@ pub async fn install_with_priority(
                             e
                         );
                         log.push(&format!("[✗] Failed to install {} from AUR: {}", pkg, e));
-                        return;
+                        bail!("failed to install {} from AUR: {}", pkg, e);
                     }
                 }
             }
@@ -511,11 +495,14 @@ pub async fn install_with_priority(
                             "[✗] Failed to install {} from Flatpak: {}",
                             pkg, e
                         ));
-                        return;
+                        bail!("failed to install {} from Flatpak: {}", pkg, e);
                     }
                 }
             }
-            _ => log.push(&format!("[!] Unknown source for {}", pkg)),
+            _ => {
+                log.push(&format!("[!] Unknown source for {}", pkg));
+                bail!("unknown source for {}", pkg);
+            }
         }
 
         // Transaction recording: capture post-install state and save
@@ -542,6 +529,7 @@ pub async fn install_with_priority(
             "[reap][timing] install_with_priority for {} took: {:?}",
             pkg, elapsed
         ));
+        Ok(())
     } else {
         eprintln!(
             "{} Could not resolve source for '{}'",
@@ -557,6 +545,10 @@ pub async fn install_with_priority(
             pkg
         ));
         // Note: No rollback needed here - nothing was installed
+        bail!(
+            "package '{}' not found in AUR, Pacman repos, or configured taps",
+            pkg
+        );
     }
 }
 
@@ -602,7 +594,11 @@ pub fn print_search_results(results: &[aur::SearchResult]) {
 }
 
 // === Bulk Install Logic ===
-pub async fn parallel_install(pkgs: &[String], config: Arc<Config>, log: Arc<LogPane>) {
+pub async fn parallel_install(
+    pkgs: &[String],
+    config: Arc<Config>,
+    log: Arc<LogPane>,
+) -> Vec<String> {
     let max_parallel = 4; // or config.parallel
     let semaphore = Arc::new(Semaphore::new(max_parallel));
     let mut tasks = Vec::new();
@@ -613,25 +609,65 @@ pub async fn parallel_install(pkgs: &[String], config: Arc<Config>, log: Arc<Log
         let log = Arc::clone(&log);
         let permit_fut = sem.acquire_owned();
         tasks.push(tokio::spawn(async move {
-            let _permit = permit_fut.await.unwrap();
-            install_with_priority(&pkg, config, true, log, &InstallOptions::default()).await;
+            let _permit = match permit_fut.await {
+                Ok(permit) => permit,
+                Err(_) => {
+                    eprintln!("[batch] Could not acquire install slot for {}", pkg);
+                    return Some(pkg);
+                }
+            };
+            match install_with_priority(&pkg, config, true, log, &InstallOptions::default()).await {
+                Ok(()) => None,
+                Err(e) => {
+                    eprintln!("[batch] Failed to install {}: {}", pkg, e);
+                    Some(pkg)
+                }
+            }
         }));
     }
-    let _ = join_all(tasks).await;
+    join_all(tasks)
+        .await
+        .into_iter()
+        .filter_map(|result| match result {
+            Ok(Some(pkg)) => Some(pkg),
+            Ok(None) => None,
+            Err(e) => Some(format!("<task failed: {}>", e)),
+        })
+        .collect()
 }
 
-pub async fn parallel_upgrade(pkgs: &[String], config: Arc<Config>, log: Arc<LogPane>) {
+pub async fn parallel_upgrade(
+    pkgs: &[String],
+    config: Arc<Config>,
+    log: Arc<LogPane>,
+) -> Vec<String> {
     let mut tasks = Vec::new();
     for pkg in pkgs {
         let config = Arc::clone(&config);
         let log = Arc::clone(&log);
         let pkg = pkg.clone();
         tasks.push(tokio::spawn(async move {
-            install_with_priority(&pkg, config, true, log, &InstallOptions::default()).await;
+            if let Err(e) =
+                install_with_priority(&pkg, config, true, log, &InstallOptions::default()).await
+            {
+                eprintln!("[upgrade] Failed to upgrade {}: {}", pkg, e);
+                Some(pkg)
+            } else {
+                None
+            }
         }));
     }
-    let _ = join_all(tasks).await;
+    let failures: Vec<String> = join_all(tasks)
+        .await
+        .into_iter()
+        .filter_map(|result| match result {
+            Ok(Some(pkg)) => Some(pkg),
+            Ok(None) => None,
+            Err(e) => Some(format!("<task failed: {}>", e)),
+        })
+        .collect();
     log.push("[reap] All upgrades complete.");
+    failures
 }
 
 pub fn repo_has_package(pkg: &str, repo: &str) -> bool {
@@ -693,47 +729,31 @@ pub fn detect_source(pkg: &str, repo: Option<&str>, binary_only: bool) -> Option
     None
 }
 
+#[allow(dead_code)]
+/// Build a Tokio runtime, reporting failure instead of panicking.
+///
+/// Returns `None` if the runtime cannot be created (e.g. resource
+/// exhaustion), letting callers bail out cleanly rather than crash.
+fn new_runtime() -> Option<tokio::runtime::Runtime> {
+    match tokio::runtime::Runtime::new() {
+        Ok(rt) => Some(rt),
+        Err(e) => {
+            eprintln!("[reap] Failed to start async runtime: {e}");
+            None
+        }
+    }
+}
+
 pub fn handle_install(pkgs: Vec<String>) {
     let backend: Box<dyn Backend> = Box::new(AurBackend::new());
     for pkg in pkgs {
         println!("[reap] Installing {}...", pkg);
-        tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(backend.install(&pkg));
+        let Some(rt) = new_runtime() else { return };
+        rt.block_on(backend.install(&pkg));
     }
 }
 
-pub async fn handle_install_parallel(pkgs: Vec<String>, max_parallel: usize) {
-    let semaphore = Arc::new(Semaphore::new(max_parallel));
-    let pb = ProgressBar::new(pkgs.len() as u64);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}")
-            .expect("Failed to create ProgressStyle")
-            .progress_chars("#>-"),
-    );
-    let mut handles = Vec::new();
-    for pkg in pkgs {
-        let permit = semaphore.clone().acquire_owned().await.unwrap();
-        let pb = pb.clone();
-        let pkg = pkg.clone();
-        handles.push(tokio::spawn(async move {
-            let _permit = permit;
-            let _ = std::panic::AssertUnwindSafe(async {
-                handle_install(vec![pkg.clone()]);
-            })
-            .catch_unwind()
-            .await;
-            pb.inc(1);
-            Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
-        }));
-    }
-    let _ = join_all(handles).await;
-    pb.finish_with_message("All installs complete.");
-    println!("[reap] All installs complete.");
-}
-
-pub fn handle_removal(pkgs: &[String]) {
+pub fn handle_removal(pkgs: &[String]) -> bool {
     // Transaction recording
     let journal = crate::transaction::TransactionJournal::new();
     let mut tx_builder = journal.begin_transaction(
@@ -741,13 +761,18 @@ pub fn handle_removal(pkgs: &[String]) {
         pkgs.to_vec(),
     );
 
+    let mut all_ok = true;
+    let mut failed: Vec<String> = Vec::new();
     for pkg in pkgs {
         // Capture pre-removal state (version before removal)
         let mut pkg_change = crate::transaction::capture_pre_state(pkg, &Source::Pacman);
         pkg_change.change_type = crate::transaction::PackageChangeType::Remove;
 
         println!("[reap] Removing {}...", pkg);
-        aur::uninstall(pkg);
+        if !aur::uninstall(pkg) {
+            all_ok = false;
+            failed.push(pkg.clone());
+        }
 
         // After removal, new_version should be None
         pkg_change.new_version = None;
@@ -755,26 +780,36 @@ pub fn handle_removal(pkgs: &[String]) {
         tx_builder.add_package_change(pkg_change);
     }
 
-    // Save the transaction
-    let record = tx_builder.complete();
+    // Classify the transaction based on the actual removal outcome.
+    let record = if all_ok {
+        tx_builder.complete()
+    } else {
+        tx_builder.fail(format!("failed to remove: {}", failed.join(", ")))
+    };
     if let Err(e) = journal.save_transaction(&record) {
         eprintln!("[transaction] Warning: Failed to save: {}", e);
     } else {
         println!("[transaction] Recorded removal: {}", record.id);
     }
+
+    all_ok
 }
 
-pub fn handle_local_install(pkgs: &[String]) {
+pub fn handle_local_install(pkgs: &[String]) -> bool {
+    let mut all_ok = true;
     for pkg in pkgs {
         println!("[reap] Installing local package {}...", pkg);
-        aur::install_local(pkg);
+        if !aur::install_local(pkg) {
+            all_ok = false;
+        }
     }
+    all_ok
 }
 
 pub fn handle_search(terms: &[String]) {
     for term in terms {
         println!("[reap] Searching for {}...", term);
-        let rt = tokio::runtime::Runtime::new().unwrap();
+        let Some(rt) = new_runtime() else { return };
         // Use unified_search to search across all backends (taps, AUR, flatpak)
         let results = rt.block_on(unified_search(term));
         print_search_results(&results);
@@ -839,7 +874,7 @@ pub fn handle_update() {
     }
 }
 
-pub fn handle_sync_db() {
+pub fn handle_sync_db() -> bool {
     use owo_colors::OwoColorize;
     println!("{} Synchronizing package databases...", "🔄".bright_blue());
 
@@ -849,22 +884,35 @@ pub fn handle_sync_db() {
         .status();
 
     match status {
-        Ok(s) if s.success() => println!("{} Database sync completed", "✅".bright_green()),
-        Ok(_) => eprintln!("{} Failed to sync database", "❌".bright_red()),
-        Err(e) => eprintln!("{} Error syncing database: {}", "❌".bright_red(), e),
+        Ok(s) if s.success() => {
+            println!("{} Database sync completed", "✅".bright_green());
+            true
+        }
+        Ok(_) => {
+            eprintln!("{} Failed to sync database", "❌".bright_red());
+            false
+        }
+        Err(e) => {
+            eprintln!("{} Error syncing database: {}", "❌".bright_red(), e);
+            false
+        }
     }
 }
 
-pub fn handle_upgrade_all() {
+pub fn handle_upgrade_all() -> bool {
     use owo_colors::OwoColorize;
     println!("{} Upgrading all packages...", "🚀".bright_blue());
-    let rt = tokio::runtime::Runtime::new().unwrap();
+    let Some(rt) = new_runtime() else {
+        return false;
+    };
     if let Err(e) = rt.block_on(aur::upgrade_all()) {
         eprintln!("{} Upgrade all failed: {}", "❌".bright_red(), e);
+        return false;
     }
+    true
 }
 
-pub fn handle_clean() {
+pub fn handle_clean() -> bool {
     println!("[reap] Cleaning package cache...");
     let status = std::process::Command::new("sudo")
         .arg("pacman")
@@ -873,9 +921,18 @@ pub fn handle_clean() {
         .status();
 
     match status {
-        Ok(s) if s.success() => println!("[reap] Cache cleaned successfully"),
-        Ok(_) => eprintln!("[reap] Failed to clean cache"),
-        Err(e) => eprintln!("[reap] Error cleaning cache: {}", e),
+        Ok(s) if s.success() => {
+            println!("[reap] Cache cleaned successfully");
+            true
+        }
+        Ok(_) => {
+            eprintln!("[reap] Failed to clean cache");
+            false
+        }
+        Err(e) => {
+            eprintln!("[reap] Error cleaning cache: {}", e);
+            false
+        }
     }
 }
 
@@ -887,10 +944,11 @@ pub fn handle_doctor() {
     }
 }
 
-pub fn handle_upgrade(parallel: bool) {
+pub fn handle_upgrade(parallel: bool) -> bool {
     let config = crate::config::Config::load();
     let installed = crate::pacman::list_installed_aur();
     let mut to_upgrade: Vec<String> = Vec::new();
+    let mut target_versions = std::collections::HashMap::new();
     for pkg in installed {
         if config.is_ignored(&pkg) {
             println!("[reap] Skipping ignored package: {}", pkg);
@@ -899,31 +957,120 @@ pub fn handle_upgrade(parallel: bool) {
         if let Ok(remote) = crate::aur::fetch_package_info(&pkg) {
             let local_ver = crate::pacman::get_version(&pkg);
             if local_ver.as_deref() != Some(&remote.version) {
+                target_versions.insert(pkg.to_string(), remote.version);
                 to_upgrade.push(pkg.to_string());
             }
         }
     }
     if to_upgrade.is_empty() {
         println!("[reap] All AUR packages up to date.");
-        return;
+        return true;
     }
     println!("[reap] Upgrading: {:?}", to_upgrade);
-    if parallel {
-        tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(handle_install_parallel(to_upgrade, config.parallel));
+    let Some(rt) = new_runtime() else {
+        return false;
+    };
+    let reviews = match rt.block_on(crate::install_plan::create_install_plan(
+        &to_upgrade,
+        &config,
+    )) {
+        Ok(plan) => {
+            plan.print_summary();
+            if plan.is_blocked() {
+                eprintln!("[plan] Upgrade plan has unresolved dependencies or conflicts.");
+                return false;
+            }
+            let reviews = crate::pkgbuild_review::review_plan(&plan);
+            crate::pkgbuild_review::print_reviews(&reviews);
+            // High-confidence infostealer evidence aborts the upgrade. The
+            // upgrade path has no --insecure override, so the block is absolute
+            // here; users can still inspect with `reap diff <pkg>`.
+            if crate::pkgbuild_review::has_infostealer_block(&reviews) {
+                let blocked =
+                    crate::pkgbuild_review::infostealer_blocked_packages(&reviews).join(", ");
+                eprintln!(
+                    "[security] ⛔ BLOCKED: high-confidence infostealer behavior in {}; aborting upgrade.",
+                    blocked
+                );
+                eprintln!(
+                    "[security] Inspect with `reap diff <pkg>`; install individually with --insecure only if verified safe."
+                );
+                return false;
+            }
+            if crate::pkgbuild_review::has_high_risk_review(&reviews)
+                && !crate::interactive::InteractiveManager::confirm_action(
+                    "High-risk PKGBUILD findings detected. Continue upgrade?",
+                    false,
+                )
+            {
+                // User-initiated cancel is not a failure.
+                return true;
+            }
+            let log = crate::tui::LogPane::default();
+            let mut dep_opts = InstallOptions {
+                asdeps: true,
+                ..Default::default()
+            };
+            for dep in plan.aur_dependency_steps() {
+                println!("[plan] Installing AUR dependency {}...", dep.name);
+                if let Err(e) = rt.block_on(install_aur_native(&dep.name, &log, &dep_opts)) {
+                    eprintln!(
+                        "[plan] Failed to install AUR dependency {}: {}",
+                        dep.name, e
+                    );
+                    return false;
+                }
+                dep_opts.asdeps = true;
+            }
+            reviews
+        }
+        Err(e) => {
+            eprintln!("[plan] Failed to create upgrade plan: {}", e);
+            return false;
+        }
+    };
+    let failures = if parallel {
+        let log = Arc::new(crate::tui::LogPane::default());
+        rt.block_on(parallel_upgrade(&to_upgrade, Arc::new(config.clone()), log))
     } else {
         // Use native AUR install path instead of legacy aur::install()
-        let rt = tokio::runtime::Runtime::new().unwrap();
         let log = crate::tui::LogPane::default();
         let opts = InstallOptions::default();
-        for pkg in to_upgrade {
+        let mut failures = Vec::new();
+        for pkg in &to_upgrade {
             println!("[reap] Upgrading {}...", pkg);
-            if let Err(e) = rt.block_on(install_aur_native(&pkg, &log, &opts)) {
+            if let Err(e) = rt.block_on(install_aur_native(pkg, &log, &opts)) {
                 eprintln!("[reap] Upgrade failed for {}: {}", pkg, e);
+                failures.push(pkg.clone());
             }
         }
+        failures
+    };
+    let upgrade_ok = failures.is_empty();
+    if !upgrade_ok {
+        eprintln!(
+            "[reap] {} upgrade(s) failed: {:?}",
+            failures.len(),
+            failures
+        );
     }
+
+    let completed_reviews: Vec<_> = reviews
+        .into_iter()
+        .filter(|review| {
+            target_versions.get(&review.package).is_some_and(|target| {
+                crate::pacman::get_version(&review.package).as_ref() == Some(target)
+            })
+        })
+        .collect();
+    if let Err(e) = crate::pkgbuild_review::record_review_baselines(&completed_reviews) {
+        eprintln!(
+            "[review] Warning: failed to record PKGBUILD review state: {}",
+            e
+        );
+    }
+
+    upgrade_ok
 }
 
 #[allow(dead_code)] // Retained for future use - CLI uses new transaction-based rollback
@@ -990,16 +1137,43 @@ pub fn handle_orphan(remove: bool, all: bool) {
 }
 
 pub fn show_pkgbuild_diff(pkg: &str) {
-    let local_path = std::env::temp_dir().join(format!("reap-aur-{}/PKGBUILD", pkg));
-    let local = std::fs::read_to_string(&local_path).unwrap_or_default();
-    let remote = crate::aur::get_pkgbuild_preview(pkg);
-    let diff = diff::lines(&local, &remote);
-    for d in diff {
-        match d {
-            diff::Result::Left(l) => println!("\x1b[31m- {}\x1b[0m", l),
-            diff::Result::Right(r) => println!("\x1b[32m+ {}\x1b[0m", r),
-            diff::Result::Both(l, _) => println!("  {}", l),
-        }
+    // Diff against the last accepted review baseline (not a transient build
+    // dir), and include the `.install` hook plus an audit summary.
+    crate::pkgbuild_review::render_diff(pkg);
+}
+
+/// Maps a raw makepkg output line to a concise build-phase label.
+///
+/// makepkg emits top-level progress markers prefixed with `==>`; this surfaces
+/// the meaningful ones (sources, deps, build, fakeroot, packaging) so the live
+/// install path can report real progress instead of streaming raw lines only.
+fn makepkg_phase(line: &str) -> Option<&'static str> {
+    let trimmed = line.trim_start();
+    let rest = trimmed.strip_prefix("==>")?.trim().to_ascii_lowercase();
+    if rest.starts_with("making package") {
+        Some("Starting build")
+    } else if rest.starts_with("retrieving sources") {
+        Some("Retrieving sources")
+    } else if rest.starts_with("extracting sources") {
+        Some("Extracting sources")
+    } else if rest.starts_with("checking") {
+        Some("Checking dependencies")
+    } else if rest.starts_with("starting prepare") {
+        Some("Preparing")
+    } else if rest.starts_with("starting build") {
+        Some("Building")
+    } else if rest.starts_with("starting check") {
+        Some("Running tests")
+    } else if rest.starts_with("entering fakeroot") {
+        Some("Packaging (fakeroot)")
+    } else if rest.starts_with("tidying install") {
+        Some("Tidying install")
+    } else if rest.starts_with("creating package") {
+        Some("Creating package")
+    } else if rest.starts_with("compressing package") {
+        Some("Compressing package")
+    } else {
+        None
     }
 }
 
@@ -1022,6 +1196,7 @@ pub async fn install_aur_native(
         // Also print colorized output to console
         match step {
             "fetch" => println!("{} {}", "📥".bright_blue(), msg.bright_white()),
+            "phase" => println!("{} {}", "⚙️".bright_magenta(), msg.bright_white().bold()),
             "build" => println!("{} {}", "🔨".bright_yellow(), msg.bright_white()),
             "install" => println!("{} {}", "📦".bright_green(), msg.bright_white()),
             "deps" => println!("{} {}", "🔗".bright_cyan(), msg.bright_white()),
@@ -1037,11 +1212,21 @@ pub async fn install_aur_native(
         .arg("clone")
         .arg(&repo_url)
         .arg(&build_dir)
+        // Abort if the transfer stalls below ~1 KB/s for 30s so a dead or
+        // hung mirror cannot block the clone indefinitely.
+        .env("GIT_HTTP_LOW_SPEED_LIMIT", "1000")
+        .env("GIT_HTTP_LOW_SPEED_TIME", "30")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     match clone_cmd.spawn().and_then(|mut child| {
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| std::io::Error::other("git clone: failed to capture stdout"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| std::io::Error::other("git clone: failed to capture stderr"))?;
         let mut reader = std::io::BufReader::new(stdout);
         let mut err_reader = std::io::BufReader::new(stderr);
         let mut buf = String::new();
@@ -1095,14 +1280,24 @@ pub async fn install_aur_native(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     match makepkg_cmd.spawn().and_then(|mut child| {
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| std::io::Error::other("makepkg: failed to capture stdout"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| std::io::Error::other("makepkg: failed to capture stderr"))?;
         let mut reader = std::io::BufReader::new(stdout);
         let mut err_reader = std::io::BufReader::new(stderr);
         let mut buf = String::new();
         let mut err_buf = String::new();
         while reader.read_line(&mut buf).unwrap_or(0) > 0 {
-            log_line("build", buf.trim_end());
+            let line = buf.trim_end();
+            if let Some(phase) = makepkg_phase(line) {
+                log_line("phase", phase);
+            }
+            log_line("build", line);
             buf.clear();
         }
         while err_reader.read_line(&mut err_buf).unwrap_or(0) > 0 {
@@ -1143,3 +1338,36 @@ pub async fn install_aur_native(
 }
 // NOTE: install_with_priority_enhanced removed during v0.8.0 consolidation
 // All install operations now use the single install_with_priority function
+
+#[cfg(test)]
+mod tests {
+    use super::makepkg_phase;
+
+    #[test]
+    fn makepkg_phase_maps_known_markers() {
+        assert_eq!(
+            makepkg_phase("==> Retrieving sources..."),
+            Some("Retrieving sources")
+        );
+        assert_eq!(makepkg_phase("==> Starting build()..."), Some("Building"));
+        assert_eq!(
+            makepkg_phase("==> Entering fakeroot environment..."),
+            Some("Packaging (fakeroot)")
+        );
+        assert_eq!(
+            makepkg_phase("==> Compressing package..."),
+            Some("Compressing package")
+        );
+    }
+
+    #[test]
+    fn makepkg_phase_ignores_non_markers_and_indents() {
+        assert_eq!(makepkg_phase("  -> Found foo.tar.gz"), None);
+        assert_eq!(makepkg_phase("regular build output"), None);
+        // Leading whitespace before the marker is tolerated.
+        assert_eq!(
+            makepkg_phase("   ==> Checking runtime dependencies..."),
+            Some("Checking dependencies")
+        );
+    }
+}

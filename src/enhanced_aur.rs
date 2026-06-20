@@ -64,7 +64,12 @@ impl EnhancedAurManager {
             "https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h={}",
             package
         );
-        let pkgbuild_content = reqwest::get(&pkgbuild_url).await?.text().await?;
+        let pkgbuild_content = crate::http::client()
+            .get(&pkgbuild_url)
+            .send()
+            .await?
+            .text()
+            .await?;
 
         // Parse PKGBUILD
         let pkgbuild_info = self.parse_pkgbuild(package, &pkgbuild_content)?;
@@ -223,8 +228,7 @@ impl EnhancedAurManager {
     }
 
     /// Check for file conflicts
-    #[allow(dead_code)]
-    pub fn check_file_conflicts(&self, packages: &[String]) -> Vec<DependencyConflict> {
+    fn check_file_conflicts(&self, packages: &[String]) -> Vec<DependencyConflict> {
         let mut conflicts = Vec::new();
 
         // Check for actual file conflicts by examining package contents
@@ -244,7 +248,6 @@ impl EnhancedAurManager {
         conflicts
     }
 
-    #[allow(dead_code)]
     fn get_package_file_conflicts(&self, package: &str) -> Option<Vec<(String, String)>> {
         // Query pacman for installed files and check for conflicts
         let output = Command::new("pacman").args(["-Ql", package]).output();
@@ -276,7 +279,6 @@ impl EnhancedAurManager {
         }
     }
 
-    #[allow(dead_code)]
     fn check_file_owner(&self, file_path: &str) -> Option<String> {
         let output = Command::new("pacman").args(["-Qo", file_path]).output();
 

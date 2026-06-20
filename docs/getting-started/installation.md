@@ -32,8 +32,6 @@ cargo test
 
 - Enable caching (default):
   - `cargo build --release --features cache`
-- Enable Lua scripting for hooks (planned):
-  - `cargo build --release --features lua`
 
 ## Run
 

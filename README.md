@@ -27,12 +27,13 @@
 * Interactive TUI installer with multi-source search and install queue
 * GPG key importing, PKGBUILD diff and auditing, trust level reporting
 * Supply-chain auditing: scans PKGBUILD **and** `.install` hooks for build-time and supply-chain attack patterns
-* Rollback system, backup/restore, and multi-package upgrades
+* PKGBUILD review prompts with persisted accepted baselines and changed-line previews
+* Transaction-based rollback with artifact-backed downgrades and multi-package upgrades
 * Flatpak integration with metadata and audit
 * Orphan detection and removal (AUR/pacman)
-* Dependency/conflict resolution with --resolve-deps
+* Install and upgrade planning with dependency, make dependency, conflict, and source preview
 * Binary-only and repo selection (e.g. --repo=ghostctl-aur)
-* Lua-configurable backend logic and plugin/hook support (planned)
+* Shell-based pre/post-install hooks for automation
 * Search and PKGBUILD caching for speed
 * **No yay/paru fallback** – all install/upgrade logic is native async Rust
 
@@ -69,7 +70,7 @@ reap install <pkg> --insecure       # Skip all GPG checks (not recommended)
 reap install <pkg> --repo=ghostctl-aur  # Force binary repo
 reap install <pkg> --binary-only        # Only install from binary repo
 reap upgrade                        # Upgrade all packages
-reap rollback <pkg>                 # Rollback a package
+reap rollback list                  # List recent transactions (roll back by txid)
 reap orphan [--remove]              # List/remove orphaned AUR/pacman packages
 reap backup                         # Backup config
 reap diff <pkg>                     # Show PKGBUILD diff before install/upgrade
@@ -95,13 +96,12 @@ reap install <pkg> --insecure
 # Skips all GPG checks
 ```
 
-### Conflict Resolution and Rollback Example
+### Rollback Example
 
 ```bash
-reap install <pkg>
-# If conflict: ⚠️ Conflict: /usr/bin/foo is owned by pacman:foo. Use --force to override.
-reap rollback <pkg>
-# Restores previous version from backup
+reap rollback list                  # Find the transaction id (txid) to revert
+reap rollback dry-run <txid>        # Preview the downgrades/removals
+reap rollback apply <txid>          # Execute the rollback
 ```
 
 ---
@@ -111,6 +111,9 @@ reap rollback <pkg>
 ```bash
 # 🔍 Enhanced package operations with trust and ratings
 reap install firefox --diff          # Show PKGBUILD diff before install
+reap install firefox                 # Preview install plan, then build/install
+reap install firefox --dry-run       # Preview the plan and PKGBUILD review without side effects
+reap install firefox --skipreview    # Skip structured PKGBUILD review prompts
 reap trust score firefox             # Check package security score
 reap rate firefox 5 "Great browser!" # Rate with stars and comment
 
@@ -124,9 +127,9 @@ reap aur fetch yay                    # Get PKGBUILD for analysis
 reap aur edit custom-package          # Interactive PKGBUILD editing
 reap aur deps firefox --conflicts     # Advanced dependency checking
 
-# 📋 Interactive TUI with live monitoring
-reap tui                              # Launch enhanced TUI
-# Hotkeys: t=trust, r=rate, d=diff, p=profile, TAB=details
+# 📋 Interactive TUI
+reap tui                              # Launch the TUI
+# Hotkeys: t=trust, d=diff, p=profiles tab, TAB=cycle tabs
 
 # 🛡️ Security and trust operations
 reap trust scan                       # Scan all packages for security
@@ -151,7 +154,7 @@ Reaper ensures that all tap-based packages are cryptographically verified before
 - **publisher.toml**: Each tap must provide a `publisher.toml` with publisher info and GPG key fingerprint.
 - **Verification flow:**
   1. On install, Reaper checks for `PKGBUILD.sig` and verifies it using the publisher's GPG key.
-  2. If the key is missing, Reaper will auto-fetch it from a keyserver (configurable with `--gpg-keyserver`).
+  2. If the key is missing, Reaper will auto-fetch it from the default keyserver (`hkps://keys.openpgp.org`).
   3. If verification fails, install is aborted unless `--insecure` is passed.
   4. Publisher info and verification status are shown in the CLI and TUI.
 
@@ -179,27 +182,20 @@ See [GPG Verification](docs/security/gpg-verification.md) for details.
 
 ## ⚠️ Install Conflict Handling
 
-Before installing, Reap checks for file conflicts using `pacman -Qo` on all files to be installed. If a conflict is found:
-
-```
-⚠️ Conflict: /usr/bin/foo is owned by pacman:foo. Use --force to override.
-```
-
-You can use `--force` to override, but this is not recommended unless you know what you are doing.
+During dependency resolution Reap inspects package file ownership (`pacman -Ql` / `pacman -Qo`) and reports packages whose files are already owned by another package. Pacman itself enforces file conflicts at install time, so a genuine conflict aborts the `pacman -U` step.
 
 ---
 
-## 🔙 Rollback and Backup System
+## 🔙 Rollback System
 
-Before every install, Reap backs up the current package state (pacman db and binaries) to `~/.local/share/reap/backup/<pkg>/<timestamp>/`.
-
-To rollback to the last good version:
+Every install/upgrade/remove is recorded in a transaction journal under `~/.local/share/reap/history/transactions/`. Rollback replays a transaction using cached package artifacts (the pacman cache and retained AUR builds), downgrading or reinstalling the previous versions.
 
 ```bash
-reap rollback <pkg>
+reap rollback list                  # Find the transaction id (txid)
+reap rollback show <txid>           # Inspect a transaction
+reap rollback dry-run <txid>        # Preview the planned actions
+reap rollback apply <txid>          # Execute the rollback
 ```
-
-This restores the previous version from backup.
 
 ---
 
@@ -207,7 +203,7 @@ This restores the previous version from backup.
 
 Reap searches all enabled taps first, respecting per-tap priority.
 
-Use `reap tap set-priority ghost 10` to boost priority.
+Set a tap's priority when adding it, e.g. `reap tap add ghost <url> --priority 10`.
 Results are merged with AUR/Flatpak, and sorted accordingly.
 
 Enable search caching in `reap.toml` to avoid rate limits and speed up lookups.
@@ -250,7 +246,7 @@ Config precedence: CLI flag > `~/.config/reap/reap.toml` > default. Config is va
 
 ## ### ⚙️ Smart Dependency Resolution
 
-Reap resolves and installs dependencies from taps, AUR, or your system — no yay/paru needed. Enable `--resolve-deps` to automatically satisfy PKGBUILD or tap metadata dependencies.
+Reap resolves and installs dependencies from taps, AUR, or your system — no yay/paru needed. PKGBUILD and tap metadata dependencies are satisfied automatically (controlled by `auto_resolve_deps` in `reap.toml`).
 
 Resolution order:
 1. Tap packages (highest priority)
@@ -270,8 +266,6 @@ Example:
 ```sh
 echo "[HOOK] Installing $REAP_PKG from $REAP_SOURCE"
 ```
-
-> Advanced: Lua scripting for hooks is planned as a future, low-priority feature for advanced users.
 
 ---
 
@@ -333,8 +327,6 @@ $ reap doctor
 ✅ All trusted publishers found
 ⚠️  3 orphaned packages found
 ⚠️  2 outdated Flatpak packages
-
-Run `reap doctor --fix` to sync, clean, and upgrade.
 ```
 
 Checks performed:
@@ -348,10 +340,10 @@ Checks performed:
 
 ## 🔐 Secure-by-Default, Fast Mode, and Fallback Logic
 
-- By default, Reap verifies all tap PKGBUILD signatures if present. If missing, install continues with a warning.
-- Use `--strict` or `[security] strict_signatures = true` to require signatures and abort if missing.
-- Use `--insecure` or `[security] allow_insecure = true` to bypass all GPG checks (not recommended).
-- Use `--fast` or `[perf] fast_mode = true` to skip signature, diff, and dependency checks for speed.
+- By default, Reap requires valid tap PKGBUILD signatures when installing tap packages.
+- Use `--strict` or `[security] strict_mode = true` to require fully trusted signatures where verification is available.
+- Use `--insecure` to bypass GPG checks for a single install (not recommended).
+- Use `--fast` to skip optional preflight checks for speed.
 - **No yay/paru fallback: all logic is native Rust.**
 
 ☠️ Built with paranoia by **GhostKellz**
@@ -381,6 +373,6 @@ Checks performed:
 
 ### TUI
 - **Interactive interface**: Search, queue, logs, profiles, system tabs
-- **Live monitoring**: Real-time build progress
+- **Trust integration**: View trust scores and PKGBUILD diffs inline
 
 See [CHANGELOG.md](CHANGELOG.md) for version history.

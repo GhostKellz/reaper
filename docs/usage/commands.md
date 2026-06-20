@@ -6,17 +6,34 @@
 - `reap install <pkg>` / `-S <pkg>`: Install a package from AUR, repo, or tap
   - `--repo <name>`: Install from specific repository
   - `--binary-only`: Prefer binary packages
-  - `--diff`: Show PKGBUILD diff before install
-  - `--insecure`: Skip signature verification (use with caution)
+  - `--diff`: Show the PKGBUILD and `.install` hook diff (against the last
+    reviewed baseline) before install
+  - `--fast`: Skip optional preflight checks
+  - `--strict`: Require fully trusted signatures where verification is available
+  - `--dry-run`: Preview the install plan and PKGBUILD review without installing
+  - `--noconfirm`: Skip confirmation prompts
+  - `--skipreview`: Silence the review findings and high-risk prompt (the review
+    still runs; it does not bypass the infostealer hard-block)
+  - `--insecure`: Skip signature verification, and the only override for the
+    high-confidence infostealer block (use with caution)
+  - Creates an install plan first, including source, dependency, make dependency,
+    already-satisfied, conflict, and unresolved-package information
+  - AUR install reviews persist accepted PKGBUILD baselines under the reap data
+    directory and show changed lines on later installs when the PKGBUILD differs
 - `reap remove <pkg>` / `-R <pkg>`: Remove packages
 - `reap search <term>` / `-Ss <term>`: Search for packages
 - `reap update`: Check for available updates
 - `reap upgrade`: Upgrade all packages
+  - Creates an upgrade plan before building changed AUR packages
+  - Runs the same PKGBUILD review and changed-baseline prompt used by install
 - `reap upgrade-all` / `-Syu`: Refresh database and upgrade all
 - `reap batch-install <pkgs...>`: Install multiple packages
   - `--parallel`: Install in parallel
+  - `--dry-run`: Preview the combined install plan and PKGBUILD reviews without installing
+  - `--noconfirm`: Skip confirmation prompts
+  - `--skipreview`: Skip structured PKGBUILD review prompts
 - `reap parallel-upgrade <pkgs...>`: Upgrade specific packages in parallel
-- `reap local <files...>` / `-U <file>`: Install local package files
+- `reap local <files...>`: Install local package files
 - `reap pin <pkg>`: Pin a package to current version
 
 ### Pacman-Style Shortcuts
@@ -44,7 +61,7 @@ See [Rollback Guide](./rollback.md) for detailed usage.
 - `reap tap add <name> <url>`: Add a tap repository
 - `reap tap remove <name>`: Remove a tap repository
 - `reap tap list`: List configured taps
-- `reap tap sync [name]`: Sync tap repositories
+- `reap tap sync`: Sync tap repositories
 
 ## Flatpak
 
@@ -56,6 +73,11 @@ See [Rollback Guide](./rollback.md) for detailed usage.
 - `reap flatpak audit <app>`: Audit Flatpak permissions
 - `reap flatpak-upgrade`: Shortcut for `flatpak upgrade`
 
+## Debian Packages (.deb)
+
+- `reap dpkg info <file.deb>`: Show metadata for a `.deb` file (requires `dpkg-deb`)
+- `reap dpkg install <file.deb>`: Convert a `.deb` to an Arch package via `debtap` and install it
+
 ## Security & Trust
 
 ### Trust Commands
@@ -65,19 +87,18 @@ See [Rollback Guide](./rollback.md) for detailed usage.
 - `reap trust update`: Update trust database
 
 ### Security Commands
-- `reap security audit <pkg>`: Audit a package's PKGBUILD and `.install` hook for risky and supply-chain patterns
-- `reap security scan-all`: Audit every installed AUR package
-- `reap security stats`: Show security statistics
+- `reap security audit <pkg|path>`: Audit a package's PKGBUILD and `.install` hook (or a local PKGBUILD file) for risky, supply-chain, and infostealer patterns
+- `reap security scan-all`: Audit every installed AUR package and flag any with high-confidence infostealer behavior
+- `reap security stats`: Show the live detection-rule counts
 - `reap security update-rules`: Update security rules
 
-The audit scans both the PKGBUILD and the `.install` hook (when present), flagging build-time code-execution and supply-chain techniques such as bundled hook execution, npm/bun dependency installs, npm lifecycle hooks, and Tor C2 endpoints.
+The audit scans both the PKGBUILD and the `.install` hook (when present), flagging build-time code-execution and supply-chain techniques such as bundled hook execution, npm/bun dependency installs, npm lifecycle hooks, and Tor C2 endpoints. It also reports an infostealer-confidence rating; high-confidence packages are blocked on install by default (override: `--insecure`). See the [Trust Model](../security/trust-model.md) for the correlation logic and block policy.
 
 ### GPG Commands
 - `reap gpg import <keyid>`: Import a GPG key
 - `reap gpg show <keyid>`: Show GPG key info
 - `reap gpg check <keyid>`: Check if key is available
-- `reap gpg verify <path>`: Verify PKGBUILD signature
-- `reap gpg set-keyserver <url>`: Set GPG keyserver
+- `reap gpg verify-pkgbuild <path>`: Verify PKGBUILD signature
 - `reap gpg check-keyserver <url>`: Test keyserver connectivity
 
 ## System Maintenance
@@ -107,7 +128,8 @@ The audit scans both the PKGBUILD and the `.install` hook (when present), flaggi
 ## Other
 
 - `reap tui`: Launch interactive TUI
-- `reap audit <pkg>`: Audit a specific package
+- `reap audit <pkg>`: Preview a package's PKGBUILD and run the security audit (findings, risk score, infostealer confidence)
+- `reap diff <pkg>`: Diff a package's current PKGBUILD and `.install` hook against the last reviewed baseline, with an audit summary
 - `reap rate <pkg> -r <1-5> [-c "comment"]`: Rate a package
 - `reap completion <shell>`: Generate shell completions
 

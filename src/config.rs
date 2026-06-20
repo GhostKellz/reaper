@@ -9,8 +9,8 @@ use toml_edit::{DocumentMut, value};
 /// # Loading Precedence (lowest to highest)
 ///
 /// 1. Built-in defaults (`Config::default()`)
-/// 2. Config file (`~/.config/reaper/reap.toml`)
-/// 3. Active profile overrides (`~/.config/reaper/profiles/<name>.toml`)
+/// 2. Config file (`~/.config/reap/reap.toml`)
+/// 3. Active profile overrides (`~/.config/reap/profiles/<name>.toml`)
 /// 4. Environment variable overrides (`REAP_*`)
 /// 5. CLI flag overrides (handled at call site)
 ///
@@ -63,8 +63,6 @@ pub struct Config {
     // === Feature Flags ===
     /// Enable caching
     pub enable_cache: bool,
-    /// Enable Lua hooks (experimental)
-    pub enable_lua_hooks: bool,
 
     // === Subsystem Configs ===
     /// Development package tracking
@@ -181,9 +179,6 @@ impl Config {
         }
         if let Some(cache) = file.enable_cache {
             self.enable_cache = cache;
-        }
-        if let Some(lua) = file.enable_lua_hooks {
-            self.enable_lua_hooks = lua;
         }
 
         // Devel settings
@@ -371,7 +366,6 @@ impl Default for Config {
             theme: "dark".to_string(),
             show_tips: false,
             enable_cache: true,
-            enable_lua_hooks: false,
             devel: DevelConfig {
                 auto_check: true,
                 check_interval_hours: 24,
@@ -414,7 +408,6 @@ pub struct ConfigFile {
     pub theme: Option<String>,
     pub show_tips: Option<bool>,
     pub enable_cache: Option<bool>,
-    pub enable_lua_hooks: Option<bool>,
     pub devel: Option<DevelFileConfig>,
     pub build: Option<BuildFileConfig>,
     pub security: Option<SecurityFileConfig>,
@@ -597,11 +590,18 @@ pub fn reset_config() {
         theme: Some("dark".to_string()),
         show_tips: Some(false),
         enable_cache: Some(true),
-        enable_lua_hooks: Some(false),
         ..Default::default()
     };
-    let _ = fs::write(&path, toml::to_string_pretty(&default_config).unwrap());
-    println!("[config] Configuration reset to defaults");
+    match toml::to_string_pretty(&default_config) {
+        Ok(serialized) => {
+            if let Err(e) = fs::write(&path, serialized) {
+                eprintln!("[config] Failed to write default config: {}", e);
+                return;
+            }
+            println!("[config] Configuration reset to defaults");
+        }
+        Err(e) => eprintln!("[config] Failed to serialize default config: {}", e),
+    }
 }
 
 pub fn show_config() {
